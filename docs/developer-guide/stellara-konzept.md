@@ -1975,9 +1975,10 @@ Stufe 1 — .github/workflows/release-please.yml
       (analysiert Conventional Commits, legt/aktualisiert Release-PR,
        erzeugt beim Merge Tag vX.Y.Z + GitHub-Release)
   Token:
-    - RELEASE_PLEASE_TOKEN (fein-granularer PAT, contents:write +
-      pull-requests:write + issues:write, ausschließlich auf dieses Repo,
-      im GitHub Environment release)
+    - STELLARA_RELEASE_PLEASE_TOKEN (fein-granularer PAT, ausschließlich auf
+      sebastian-software/stellara begrenzt, Contents: Read and write,
+      Pull requests: Read and write und Issues: Read and write; im GitHub
+      Environment release)
 
 Stufe 2 — .github/workflows/release.yml
   Trigger:
@@ -2005,8 +2006,11 @@ Stufe 2 — .github/workflows/release.yml
 und dem gleichen Stand in `.release-please-manifest.json`. release-please
 berechnet nachfolgende Versionen ab diesem öffentlichen Ausgangspunkt.
 
-**Operator-Setup:** Der `RELEASE_PLEASE_TOKEN` muss als Environment-Secret
-unter `release` einmalig vom Operator angelegt werden. Bis dahin bleibt
+**Operator-Setup:** Der `STELLARA_RELEASE_PLEASE_TOKEN` muss als
+Environment-Secret im GitHub Environment `release` einmalig vom Operator
+angelegt werden. Der fein-granulare PAT ist ausschließlich auf
+`sebastian-software/stellara` begrenzt und benötigt Contents: Read and write,
+Pull requests: Read and write sowie Issues: Read and write. Bis dahin bleibt
 `RELEASE_AUTOMATION_ENABLED=false`. Das Default-`GITHUB_TOKEN` würde den
 Tag-Push erzeugen, ohne dass weitere Workflows triggern.
 
