@@ -27,7 +27,7 @@ Solange die Version unter `1.0.0` liegt, gilt:
 
 ## Environment `release`
 
-Der release-please-Job verwendet das GitHub Environment `release`. Darin liegt `RELEASE_PLEASE_TOKEN` als fein-granularer Personal Access Token mit Zugriff ausschließlich auf `sebastian-software/stellara`:
+Der release-please-Job verwendet das GitHub Environment `release`. Darin liegt `STELLARA_RELEASE_PLEASE_TOKEN` als fein-granularer Personal Access Token, der ausschließlich auf `sebastian-software/stellara` begrenzt ist:
 
 - Contents: Read and write;
 - Pull requests: Read and write;
