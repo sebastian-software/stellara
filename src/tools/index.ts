@@ -1,0 +1,71 @@
+/**
+ * Re-exports for the shared tool orchestration layer (concept §8).
+ *
+ * Single import surface for the REST route handlers and the MCP dispatcher.
+ * Both consume the same `runX` functions so the two transports cannot drift.
+ */
+export {
+  type BrowserContentResult,
+  type BrowserCookiesResult,
+  type BrowserEvalResult,
+  type BrowserHarResult,
+  type BrowserInteractResult,
+  type BrowserNavigateResult,
+  type BrowserPdfResult,
+  type BrowserScreenshotResult,
+  type BrowserSessionStartResult,
+  type BrowserSessionStopResult,
+  type BrowserStorageResult,
+  type BrowserTabsResult,
+  runBrowserContent,
+  runBrowserCookies,
+  runBrowserEval,
+  runBrowserHar,
+  runBrowserInteract,
+  runBrowserNavigate,
+  runBrowserPdf,
+  runBrowserScreenshot,
+  runBrowserSessionStart,
+  runBrowserSessionStop,
+  runBrowserStorage,
+  runBrowserTabs,
+} from "./browser.js";
+export { type DomainAvailabilityResult, runDomainAvailability } from "./domain.js";
+export {
+  type MemoryDeleteInput,
+  type MemoryDeleteResult,
+  type MemoryListResult,
+  type MemorySearchResult,
+  type MemoryUpsertResult,
+  runMemoryDelete,
+  runMemoryList,
+  runMemorySearch,
+  runMemoryUpsert,
+} from "./memory.js";
+export {
+  type ResearchSource,
+  runWebCrawl,
+  runWebCrawlStart,
+  runWebCrawlStatus,
+  runWebExtract,
+  runWebFetch,
+  runWebGet,
+  runWebGraphql,
+  runWebGraphqlQuery,
+  runWebMap,
+  runWebResearch,
+  runWebScrape,
+  runWebSearch,
+  type WebCrawlResult,
+  type WebCrawlStartResult,
+  type WebCrawlStatusResult,
+  type WebExtractResult,
+  type WebFetchResult,
+  type WebGetResult,
+  type WebGraphqlQueryResult,
+  type WebGraphqlResult,
+  type WebMapResult,
+  type WebResearchResult,
+  type WebScrapeResult,
+  type WebSearchResult,
+} from "./web.js";

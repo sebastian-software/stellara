@@ -1,0 +1,31 @@
+node_modules
+dist
+.git
+.env*
+stellara-data/
+
+# Editor configs
+.editorconfig
+.vscode/
+
+# Lint and format configs
+.prettierrc.json
+.prettierignore
+eslint.config.js
+oxlint.config.ts
+cspell.config.json
+
+# Test configs and artefacts
+vitest.config.ts
+vitest.integration.config.ts
+tests
+coverage/
+
+# Docs
+docs
+*.md
+
+# Plugin and agent state
+.github
+.sf-plugin/
+.claude/
