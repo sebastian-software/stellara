@@ -39,7 +39,7 @@ This ADR holds this project's tracked Effective Flow configuration. `.effective-
 | skills.include                            | (empty)                    |
 | skills.exclude                            | (empty)                    |
 | mergeGate.completion                      | merge                      |
-| mergeGate.conflictResolution              | auto                       |
+| mergeGate.conflictResolution              | ask                        |
 | mergeGate.requireAllChecks                | true                       |
 | mergeGate.checkWaitMinutes                | 20                         |
 | mergeGate.maxRounds                       | 10                         |
