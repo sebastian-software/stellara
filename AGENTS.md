@@ -2,6 +2,8 @@
 
 Last updated: 2026-08-27
 
+**Effective Flow project setup:** docs/adr/effective-flow-project-setup.md
+
 Diese Datei ist die verbindliche Regelquelle für alle KI-Agenten (Codex, Claude Code, weitere LLM-Tools), die in diesem Repository Code oder Doku ändern. Sie ergänzt das Architektur-Konzept und gilt für jeden Beitrag.
 
 ## Überblick
