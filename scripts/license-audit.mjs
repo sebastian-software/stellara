@@ -414,7 +414,15 @@ export function readAttachedSpdx(details, platform, sbom) {
 function localImage(reference, platform) {
   run("docker", ["pull", "--platform", platform, reference]);
   const result = JSON.parse(
-    run("docker", ["image", "inspect", reference, "--format", "{{json .}}"]),
+    run("docker", [
+      "image",
+      "inspect",
+      "--platform",
+      platform,
+      reference,
+      "--format",
+      "{{json .}}",
+    ]),
   );
   const digest = reference.slice(reference.lastIndexOf("@"));
   if (!result.RepoDigests?.some((item) => item.endsWith(digest))) {

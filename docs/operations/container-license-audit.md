@@ -101,7 +101,7 @@ audit_root=$(mktemp -d)
 release_digest=$(docker buildx imagetools inspect "ghcr.io/sebastian-software/stellara:$release_version" --format '{{json .}}' | jq -er '.manifest.digest')
 release_ref="ghcr.io/sebastian-software/stellara@$release_digest"
 docker pull --platform "$platform" "$release_ref"
-release_base=$(docker image inspect "$release_ref" --format '{{index .Config.Labels "org.opencontainers.image.base.name"}}')
+release_base=$(docker image inspect --platform "$platform" "$release_ref" --format '{{index .Config.Labels "org.opencontainers.image.base.name"}}')
 
 pnpm license:audit capture \
   --image "$release_ref" \
