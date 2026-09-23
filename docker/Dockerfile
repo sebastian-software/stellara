@@ -1,6 +1,7 @@
 # production dependencies (kept separate so the runtime image never receives
 # build, test, lint, or formatting packages).
-FROM node:24-bookworm-slim AS prod-deps
+ARG NODE_BASE_IMAGE=node:24-bookworm-slim
+FROM ${NODE_BASE_IMAGE} AS prod-deps
 WORKDIR /app
 ENV NODE_ENV=production \
     COREPACK_ENABLE_DOWNLOAD_PROMPT=0
@@ -11,7 +12,7 @@ RUN pnpm install --prod --frozen-lockfile
 
 # build (bookworm-slim keeps the Playwright Chromium and better-sqlite3
 # artifacts compatible with the runtime stage).
-FROM node:24-bookworm-slim AS build
+FROM ${NODE_BASE_IMAGE} AS build
 WORKDIR /app
 ENV NODE_ENV=development \
     COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
@@ -29,8 +30,12 @@ COPY . .
 RUN pnpm build
 
 # runtime
-FROM node:24-bookworm-slim
+FROM ${NODE_BASE_IMAGE}
+ARG NODE_BASE_IMAGE
+ARG SOURCE_COMMIT=unknown
 ARG APP_VERSION=0.0.0
+LABEL org.opencontainers.image.base.name="${NODE_BASE_IMAGE}" \
+      org.opencontainers.image.revision="${SOURCE_COMMIT}"
 WORKDIR /app
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 # Mirror `playwright install --with-deps chromium` on the runtime image so

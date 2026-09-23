@@ -1,7 +1,11 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { checkProductionBoundary, parseProductionClosure } from "../../scripts/license-audit.mjs";
 
 const REPOSITORY_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const RUN_ID = `${process.pid}-${randomUUID().replaceAll("-", "")}`.toLowerCase();
@@ -116,6 +120,33 @@ function parseImageConfig(serialized: string): ImageConfig {
     User: parsed.User,
     Volumes: parsed.Volumes,
   };
+}
+
+function parseAuditComponents(serialized: string) {
+  const parsed: unknown = JSON.parse(serialized);
+  if (!isRecord(parsed) || !Array.isArray(parsed.components)) {
+    throw new Error("Runtime audit probe has no components array");
+  }
+  return parsed.components.map((item: unknown) => {
+    if (
+      !isRecord(item) ||
+      typeof item.id !== "string" ||
+      typeof item.kind !== "string" ||
+      typeof item.name !== "string" ||
+      (typeof item.version !== "string" && item.version !== null) ||
+      typeof item.location !== "string"
+    ) {
+      throw new Error("Runtime audit probe contains an invalid component");
+    }
+    return {
+      id: item.id,
+      kind: item.kind,
+      name: item.name,
+      version: item.version ?? "",
+      location: item.location,
+      realPath: typeof item.realPath === "string" ? item.realPath : null,
+    };
+  });
 }
 
 function asError(error: unknown): Error {
@@ -350,6 +381,38 @@ describe("runtime Docker image", () => {
       dependencyProbe,
     ]);
     expect(result.stdout).toContain("runtime dependency boundary verified");
+  });
+
+  it("inventories physical npm packages against the production lockfile closure", async () => {
+    const probe = readFileSync(join(REPOSITORY_ROOT, "scripts/license-audit-runtime.mjs"), "utf8");
+    const result = await runDocker(
+      [
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--read-only",
+        "--user",
+        "0",
+        "--entrypoint",
+        "node",
+        IMAGE,
+        "--input-type=module",
+        "--eval",
+        probe,
+      ],
+      120_000,
+    );
+    const components = parseAuditComponents(result.stdout);
+    const npmPackages = components.filter((component) => component.kind === "npm");
+    expect(npmPackages.length).toBeGreaterThan(0);
+    expect(npmPackages.every((component) => component.location === component.realPath)).toBe(true);
+
+    const lockfile = readFileSync(join(REPOSITORY_ROOT, "pnpm-lock.yaml"), "utf8");
+    const boundary = checkProductionBoundary(components, parseProductionClosure(lockfile));
+    expect(boundary.developmentOnly).toStrictEqual([]);
+    expect(boundary.unexpected).toStrictEqual([]);
+    expect(boundary.absentProduction).toStrictEqual(["fsevents@2.3.2"]);
   });
 
   it("preserves the exact runtime metadata and non-root identity", async () => {
