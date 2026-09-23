@@ -47,7 +47,7 @@ logs.
 | `STELLARA_OAUTH_CIMD_RATE_LIMIT_PER_MINUTE` | `10` | Positive integer | Per-IP limit for real Client ID Metadata Document cache misses. |
 | `STELLARA_OAUTH_CIMD_MAX_IN_FLIGHT` | `16` | Positive integer | Process-wide concurrent CIMD fetch limit. |
 | `STELLARA_OAUTH_CIMD_CACHE_MAX_ENTRIES` | `512` | Positive integer | Shared positive and negative CIMD cache capacity. |
-| `STELLARA_FETCH_ENABLED` | `true` | String flag; `false` or `0` disables | Controls `web_fetch` and `web_graphql`. Matching is case-insensitive but does not trim whitespace. |
+| `STELLARA_FETCH_ENABLED` | `true` | String flag; `false` or `0` disables | Controls `web_fetch`, `web_get`, `web_graphql`, and `web_graphql_query`. Matching is case-insensitive but does not trim whitespace. |
 | `STELLARA_PLAYWRIGHT_ENABLED` | `true` | String flag; `false` or `0` disables | Controls browser routes, MCP tools, and Chromium startup. Matching is case-insensitive but does not trim whitespace. |
 | `STELLARA_DOMAIN_ENABLED` | `true` | String flag; trimmed `false` or `0` disables | Controls RDAP/WHOIS availability tools; WHOIS needs outbound TCP port 43. |
 | `STELLARA_PLAYWRIGHT_MAX_SESSIONS` | `3` | Positive integer | Global browser-session cap; each session can consume substantial memory. |
