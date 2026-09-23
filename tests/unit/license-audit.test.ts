@@ -151,20 +151,52 @@ describe("production lockfile boundary", () => {
 });
 
 describe("runtime and SPDX reconciliation", () => {
-  it("requires the requested platform's attached SBOM for an image index", () => {
+  it("requires the requested platform and a digest-bound SBOM attestation", () => {
     const amd64 = { packages: [spdxPackage("SPDXRef-amd64", "amd64-only", "1.0.0")] };
-    const misleadingDefault = {
-      packages: [spdxPackage("SPDXRef-default", "wrong-platform", "1.0.0")],
-    };
     const indexedImage = {
-      manifest: { manifests: [{ platform: { os: "linux", architecture: "amd64" } }] },
-      sbom: { SPDX: misleadingDefault, "linux/amd64": { SPDX: amd64 } },
+      manifest: {
+        manifests: [
+          { digest: "sha256:image", platform: { os: "linux", architecture: "amd64" } },
+          {
+            annotations: {
+              "vnd.docker.reference.type": "attestation-manifest",
+              "vnd.docker.reference.digest": "sha256:image",
+            },
+          },
+        ],
+      },
     };
 
-    expect(readAttachedSpdx(indexedImage, "linux/amd64")).toStrictEqual(amd64);
+    expect(readAttachedSpdx(indexedImage, "linux/amd64", { SPDX: amd64 })).toStrictEqual(amd64);
     expect(() => {
-      readAttachedSpdx(indexedImage, "linux/arm64");
-    }).toThrow(/No attached SPDX SBOM for the exact linux\/arm64 image digest/u);
+      readAttachedSpdx(indexedImage, "linux/arm64", { SPDX: amd64 });
+    }).toThrow(/Expected one linux\/arm64 image manifest/u);
+    expect(() => {
+      readAttachedSpdx(indexedImage, "linux/amd64", {});
+    }).toThrow(/No attached SPDX SBOM/u);
+    expect(() => {
+      expect(
+        readAttachedSpdx(
+          {
+            manifest: {
+              manifests: [
+                ...indexedImage.manifest.manifests,
+                { digest: "sha256:other", platform: { os: "linux", architecture: "arm64" } },
+              ],
+            },
+          },
+          "linux/amd64",
+          { SPDX: amd64 },
+        ),
+      ).toStrictEqual(amd64);
+    }).not.toThrow();
+    expect(() => {
+      readAttachedSpdx(
+        { manifest: { manifests: [indexedImage.manifest.manifests[0]] } },
+        "linux/amd64",
+        { SPDX: amd64 },
+      );
+    }).toThrow(/one SBOM attestation manifest bound/u);
   });
 
   it("accepts exact purl identities for npm and Debian components", () => {

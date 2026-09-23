@@ -6,7 +6,7 @@ The initial candidate must come from a clean checkout containing the production-
 
 ## Capture a clean-checkout candidate
 
-Use Node.js 24 or later, the repository's pnpm version, Docker with Buildx, and `jq`. Docker must be able to reach an ephemeral registry on local port 5000. The example uses `linux/amd64`; repeat the procedure for every platform being reviewed. Keep the evidence directory outside the checkout because `capture` rejects modified or untracked repository files and refuses to overwrite an output directory.
+Use Node.js 24 or later, the repository's pnpm version, Docker with Buildx, and `jq`. Docker must be able to reach an ephemeral registry on local port 58080. The example uses `linux/amd64`; repeat the procedure for every platform being reviewed. Keep the evidence directory outside the checkout because `capture` rejects modified or untracked repository files and refuses to overwrite an output directory.
 
 From the repository root, with no output from `git status --porcelain --untracked-files=all`:
 
@@ -22,7 +22,7 @@ base_digest=$(docker buildx imagetools inspect "$base_tag" --format '{{json .}}'
 base_ref="$base_tag@$base_digest"
 audit_root=$(mktemp -d)
 
-docker run -d --name stellara-audit-registry -p 127.0.0.1:5000:5000 registry:2
+docker run -d --name stellara-audit-registry -p 127.0.0.1:58080:5000 registry:2
 docker buildx create --name stellara-audit-builder --driver docker-container --driver-opt network=host --bootstrap
 docker buildx build \
   --builder stellara-audit-builder \
@@ -33,11 +33,11 @@ docker buildx build \
   --build-arg "APP_VERSION=$app_version" \
   --sbom=true --provenance=false \
   --output type=registry,registry.insecure=true \
-  --tag localhost:5000/stellara:audit .
+  --tag localhost:58080/stellara:audit .
 
-candidate_digest=$(docker buildx imagetools inspect localhost:5000/stellara:audit --format '{{json .}}' | jq -er '.manifest.digest')
-candidate_ref="localhost:5000/stellara@$candidate_digest"
-pnpm license:audit -- capture \
+candidate_digest=$(docker buildx imagetools inspect localhost:58080/stellara:audit --format '{{json .}}' | jq -er '.manifest.digest')
+candidate_ref="localhost:58080/stellara@$candidate_digest"
+pnpm license:audit capture \
   --image "$candidate_ref" \
   --base "$base_ref" \
   --platform "$platform" \
@@ -45,7 +45,7 @@ pnpm license:audit -- capture \
 printf 'Candidate evidence: %s\n' "$audit_root/candidate"
 ```
 
-The local registry preserves the SBOM attestation while Buildx pushes the candidate. Buildx's container driver and host networking let the builder reach `localhost:5000`; the registry must be reserved for this audit. Docker documents [SBOM attestations](https://docs.docker.com/build/metadata/attestations/sbom/) and the [local-registry pattern](https://docs.docker.com/build/ci/github-actions/local-registry/).
+The local registry preserves the SBOM attestation while Buildx pushes the candidate. Buildx's container driver and host networking let the builder reach `localhost:58080`; the registry must be reserved for this audit. Docker documents [SBOM attestations](https://docs.docker.com/build/metadata/attestations/sbom/) and the [local-registry pattern](https://docs.docker.com/build/ci/github-actions/local-registry/).
 
 `capture` pulls both immutable references for the selected platform. It checks the candidate's source and base labels against the checkout and requested base, checks that the runtime layers begin with the base layers, and requires an attached SPDX SBOM for that digest and platform. It then writes three new files in `$audit_root/candidate/`:
 
@@ -73,7 +73,7 @@ Copy the template to a separate decision file and have the reviewer complete it:
 ```sh
 cp "$audit_root/candidate/decisions.template.json" "$audit_root/candidate/decisions.json"
 # Edit decisions.json using the reviewed primary evidence.
-pnpm license:audit -- verify \
+pnpm license:audit verify \
   --evidence "$audit_root/candidate" \
   --decisions "$audit_root/candidate/decisions.json"
 ```
@@ -103,7 +103,7 @@ release_ref="ghcr.io/sebastian-software/stellara@$release_digest"
 docker pull --platform "$platform" "$release_ref"
 release_base=$(docker image inspect "$release_ref" --format '{{index .Config.Labels "org.opencontainers.image.base.name"}}')
 
-pnpm license:audit -- capture \
+pnpm license:audit capture \
   --image "$release_ref" \
   --base "$release_base" \
   --platform "$platform" \
@@ -116,7 +116,7 @@ Use a fresh evidence directory for the release. Inspect its `evidence.json` and 
 ```sh
 cp "$audit_root/release/decisions.template.json" "$audit_root/release/decisions.json"
 # Complete decisions.json using the release evidence and qualified review.
-pnpm license:audit -- verify \
+pnpm license:audit verify \
   --evidence "$audit_root/release" \
   --decisions "$audit_root/release/decisions.json"
 ```

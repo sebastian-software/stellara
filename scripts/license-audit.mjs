@@ -382,9 +382,29 @@ function imageDetails(reference, platform) {
   return { details, manifestDigest: selected[0].digest };
 }
 
-export function readAttachedSpdx(details, platform) {
-  const sbom = details.sbom ?? details.SBOM;
-  const spdx = Array.isArray(details.manifest?.manifests) ? sbom?.[platform]?.SPDX : sbom?.SPDX;
+export function readAttachedSpdx(details, platform, sbom) {
+  const manifests = details.manifest?.manifests;
+  if (!Array.isArray(manifests)) {
+    fail("Attached SBOM extraction requires an image index with a bound attestation");
+  }
+  const imageManifests = manifests.filter(
+    (item) => item.annotations?.["vnd.docker.reference.type"] !== "attestation-manifest",
+  );
+  const selected = imageManifests.filter(
+    (item) =>
+      `${item.platform?.os}/${item.platform?.architecture}${item.platform?.variant ? `/${item.platform.variant}` : ""}` ===
+      platform,
+  );
+  if (selected.length !== 1) fail(`Expected one ${platform} image manifest for attached SBOM`);
+  const attestations = manifests.filter(
+    (item) =>
+      item.annotations?.["vnd.docker.reference.type"] === "attestation-manifest" &&
+      item.annotations?.["vnd.docker.reference.digest"] === selected[0].digest,
+  );
+  if (attestations.length !== 1) {
+    fail(`Expected one SBOM attestation manifest bound to ${platform} image digest`);
+  }
+  const spdx = sbom?.SPDX;
   if (!spdx || !Array.isArray(spdx.packages)) {
     fail(`No attached SPDX SBOM for the exact ${platform} image digest`);
   }
@@ -442,7 +462,24 @@ function validateImageLineage({ imageLocal, baseLocal, sourceCommit, baseReferen
 function inspectCaptureImages(options, sourceCommit) {
   const image = imageDetails(options["--image"], options["--platform"]);
   const base = imageDetails(options["--base"], options["--platform"]);
-  const spdx = readAttachedSpdx(image.details, options["--platform"]);
+  const imageManifests = image.details.manifest.manifests.filter(
+    (item) => item.annotations?.["vnd.docker.reference.type"] !== "attestation-manifest",
+  );
+  const sbomTemplate =
+    imageManifests.length === 1
+      ? "{{json .SBOM}}"
+      : `{{json (index .SBOM "${options["--platform"]}")}}`;
+  const attached = JSON.parse(
+    run("docker", [
+      "buildx",
+      "imagetools",
+      "inspect",
+      options["--image"],
+      "--format",
+      sbomTemplate,
+    ]),
+  );
+  const spdx = readAttachedSpdx(image.details, options["--platform"], attached);
   const imageLocal = localImage(options["--image"], options["--platform"]);
   const baseLocal = localImage(options["--base"], options["--platform"]);
   validateImageLineage({ imageLocal, baseLocal, sourceCommit, baseReference: options["--base"] });
@@ -562,8 +599,8 @@ function verify(argv) {
 
 function help() {
   process.stdout.write(`Usage:
-  pnpm license:audit -- capture --image NAME@sha256:DIGEST --base NAME@sha256:DIGEST --platform linux/amd64 --output DIRECTORY
-  pnpm license:audit -- verify --evidence DIRECTORY --decisions FILE
+  pnpm license:audit capture --image NAME@sha256:DIGEST --base NAME@sha256:DIGEST --platform linux/amd64 --output DIRECTORY
+  pnpm license:audit verify --evidence DIRECTORY --decisions FILE
 
 Capture requires a clean checkout and an immutable registry image (a disposable
 local registry is suitable). It verifies source/base labels and base layers,
