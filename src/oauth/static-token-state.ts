@@ -42,7 +42,12 @@ export function buildStaticTokenSnapshot(
 function isValidUsers(users: unknown): users is Record<string, string[]> {
   if (!isRecord(users)) return false;
   for (const [userId, values] of Object.entries(users)) {
-    if (userId === "" || userId !== userId.toLowerCase() || !Array.isArray(values)) {
+    if (
+      userId === "" ||
+      userId !== userId.toLowerCase() ||
+      !Array.isArray(values) ||
+      values.length === 0
+    ) {
       return false;
     }
     if (

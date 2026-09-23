@@ -226,6 +226,62 @@ describe("static token snapshot", () => {
     }
   });
 
+  it("globally resets authorization state for an empty-fingerprint snapshot atomically", () => {
+    const storage = new OAuthStorage({ path: ":memory:", ttlSweepIntervalMs: 0 });
+    try {
+      const config = tokenConfig([[TEST_TOKEN_USER_A, "user_a"]]);
+      reconcileStaticTokenState(storage, config);
+      storage.insertClient({
+        client_id: "client",
+        client_name: "Test",
+        redirect_uris: "[]",
+        created_at: 1,
+        last_used_at: 1,
+      });
+      storage.insertKey({
+        kid: "key",
+        public_jwk: "{}",
+        private_pkcs8: "private",
+        algorithm: "RS256",
+        created_at: 1,
+        retired_at: null,
+      });
+      storage.getOrInitializeMeta("unrelated", "retained");
+      const malformed = '{"version":1,"users":{"user_a":[]}}';
+      storage.db
+        .prepare("UPDATE oauth_meta SET value = ? WHERE key = ?")
+        .run(malformed, SNAPSHOT_KEY);
+      seedAuthorization(storage, "user_a", "a");
+      seedAuthorization(storage, "user_b", "b");
+
+      storage.db.exec(
+        "CREATE TRIGGER reject_session_delete BEFORE DELETE ON oauth_sessions BEGIN SELECT RAISE(ABORT, 'injected failure'); END",
+      );
+      expect(() => reconcileStaticTokenState(storage, config)).toThrow("injected failure");
+      expectAuthorization(storage, "a", true);
+      expectAuthorization(storage, "b", true);
+      expect(storage.getMeta(SNAPSHOT_KEY)).toBe(malformed);
+
+      storage.db.exec("DROP TRIGGER reject_session_delete");
+      expect(reconcileStaticTokenState(storage, config)).toMatchObject({
+        globallyReset: true,
+        deletedCodes: 2,
+        deletedRefreshTokens: 2,
+        deletedSessions: 2,
+      });
+      expectAuthorization(storage, "a", false);
+      expectAuthorization(storage, "b", false);
+      expect(storage.getMeta(SNAPSHOT_KEY)).toBe(
+        JSON.stringify(buildStaticTokenSnapshot(config.tokens, config.revokedTokens)),
+      );
+      expect(storage.getClient("client")).toBeDefined();
+      expect(storage.getActiveKey()?.kid).toBe("key");
+      expect(storage.getMeta("unrelated")).toBe("retained");
+    } finally {
+      storage.close();
+    }
+  });
+
   it.each(["not json", '{"version":2,"users":{}}', '{"version":1,"users":{"USER_A":[]}}'])(
     "globally resets malformed or unsupported previous snapshot %s",
     (previous) => {
