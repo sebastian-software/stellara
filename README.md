@@ -45,15 +45,11 @@ The health endpoint is available at `http://localhost:8787/health` unless `PORT`
 
 ## Container deployment
 
-The supported container image is `ghcr.io/sebastian-software/stellara`. Versioned releases publish a stable patch tag plus the moving minor and `latest` tags.
+To deploy on a new host, you need Docker Engine with the Compose plugin, a separately running Firecrawl service, a TLS reverse proxy, and a public HTTPS URL. Stellara uses two existing external Docker networks: `internal` to reach Firecrawl and the network named by `STELLARA_PROXY_NETWORK` shared with the proxy. Prepare `.env` with `FIRECRAWL_BASE_URL`, `FIRECRAWL_API_KEY`, `PUBLIC_BASE_URL`, `STELLARA_PROXY_NETWORK`, and at least one strong `STELLARA_TOKEN_<USERID>`; the persistent `stellara-data/` directory must belong to UID/GID 999.
 
-Copy `.env.example` to `.env`, configure the external proxy network, prepare `stellara-data/` for UID/GID 999, and then start the service:
+Compose selects its image through `STELLARA_IMAGE`. Pin a release tag or digest for production: the current default, `ghcr.io/sebastian-software/stellara:0.1.15`, is available only for `linux/amd64` and predates the #11 token-snapshot changes. To run this checkout or use an ARM64 host, build from `docker/Dockerfile` and set `STELLARA_IMAGE=stellara:local`. The `latest` tag moves and does not identify a reproducible release.
 
-```bash
-docker compose up -d
-```
-
-Read the [operations guide](docs/operations/betrieb.md) before exposing the service. It covers proxy trust, OAuth persistence, backup, and recovery.
+Follow the [operations guide](docs/operations/betrieb.md) for network attachment, a secret-safe Compose preflight, first boot, health checks, and backup and restore before exposing the service.
 
 ## Development and tests
 
