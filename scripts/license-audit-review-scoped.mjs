@@ -408,6 +408,13 @@ function checkGroupMemberList(lines, end, { members, id }) {
   }
 }
 
+function reviewBlockStart(lines, markerIndex, id) {
+  let start = markerIndex + 1;
+  while (lines[start] === "") start += 1;
+  if (lines[start] !== "```license-review") throw new Error(`Missing review block for ${id}`);
+  return start;
+}
+
 function parseItem(lines, index, state) {
   const match = ITEM.exec(lines[index]);
   if (!match) return index;
@@ -416,11 +423,11 @@ function parseItem(lines, index, state) {
   const target = decisionTarget(state.decisions, kind);
   if (!state.expected[kind].has(id)) throw new Error(`Unknown ${kind}: ${id}`);
   if (Object.hasOwn(target, id)) throw new Error(`Duplicate ${kind}: ${id}`);
-  if (lines[index + 1] !== "```license-review") throw new Error(`Missing review block for ${id}`);
-  const end = lines.indexOf("```", index + 2);
-  if (end === -1 || lines.slice(index + 2, end).some((line) => ITEM.test(line)))
+  const start = reviewBlockStart(lines, index, id);
+  const end = lines.indexOf("```", start + 1);
+  if (end === -1 || lines.slice(start + 1, end).some((line) => ITEM.test(line)))
     throw new Error(`Unclosed review block for ${id}`);
-  const decision = decisionFrom(lines.slice(index + 2, end), kind, id);
+  const decision = decisionFrom(lines.slice(start + 1, end), kind, id);
   if (kind.endsWith("group")) {
     checkGroupMemberList(lines, end, { members: memberIds(state.members, kind, id), id });
   }

@@ -138,6 +138,17 @@ describe("focused license review", () => {
     );
   });
 
+  it("accepts blank lines inserted between markers and review blocks", () => {
+    const { evidence, scope, sbom } = fixture();
+    const view = renderScopedReviewMarkdown(evidence, sbom, scope).replaceAll(
+      " -->\n```license-review",
+      " -->\n\n```license-review",
+    );
+    const decisions = parseScopedReviewMarkdown(view, evidence, scope);
+    expect(Object.keys(decisions.components)).toHaveLength(2);
+    expect(Object.keys(decisions.groups.components)).toHaveLength(4);
+  });
+
   it("accepts an explicit, fully documented group and rejects tampered membership or scope", () => {
     const { evidence, scope, sbom } = fixture();
     const decisions = parseScopedReviewMarkdown(
