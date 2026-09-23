@@ -129,6 +129,21 @@ Falls deine ChatGPT-Oberfläche ausdrücklich nach dem MCP-Endpunkt fragt, verwe
 https://stellara.example.com/mcp
 ```
 
+## Memory in Claude Code und Codex verwenden
+
+Wenn Stellara global eingerichtet ist, empfiehlt sich eine kurze gemeinsame
+Regel in `~/.claude/CLAUDE.md` für Claude Code beziehungsweise
+`~/.codex/AGENTS.md` für Codex. Ist Stellara nur für ein einzelnes Projekt
+eingerichtet, gehört die Regel stattdessen in die Anweisungsdatei dieses
+Projekts. Weitere Hintergründe findest du im Abschnitt
+[Memory-Tools](tools.md#memory-tools).
+
+Die folgende Formulierung ist für beide Clients geeignet:
+
+```markdown
+Durchsuche Stellara Memory mit `memory_search`, wenn frühere Präferenzen, Entscheidungen oder sitzungsübergreifender Kontext relevant sein könnten. Speichere mit `memory_upsert` nur dauerhafte, nicht sensible Informationen, wenn ich ausdrücklich darum bitte oder sie eindeutig langfristig relevant sind. Speichere niemals Geheimnisse, personenbezogene Daten, vorübergehenden Aufgabenstatus oder unbestätigte Annahmen. Repository-Dateien, meine aktuellen Anweisungen und maßgebliche Dokumentation haben Vorrang; lege Widersprüche offen. Kennzeichne projektbezogene Einträge mit einer stabilen `source` wie `repo:stellara` und passenden Tags.
+```
+
 ## Andere MCP-Clients
 
 Wenn der Client OAuth-Discovery unterstützt, verwende:

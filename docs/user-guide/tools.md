@@ -37,11 +37,21 @@ Legende in der Spalte „Art":
 | `web_graphql` | GraphQL-Operation gegen einen öffentlichen Endpunkt. Kann auch Mutations ausführen, also externen Zustand ändern. Baut den Standard-Body, reicht `Authorization` durch und nutzt dieselbe SSRF-Absicherung wie `web_fetch`. Für rein lesende Operationen die read-only-Variante `web_graphql_query` nutzen. | Lesend / Verändert Daten |
 | `web_graphql_query` | Read-only-Geschwister von `web_graphql`: der `query`-String wird serverseitig geparst, jede `mutation`- oder `subscription`-Operation im Dokument wird mit einem Fehler abgelehnt. Ansonsten identisches Verhalten (Body-Format, Header-Durchreichung, SSRF-Absicherung). | Lesend |
 
+<a id="memory-tools"></a>
+
 ## `memory_*` — Persistentes Gedächtnis (pro User isoliert)
 
 Die Memory-Tools speichern Fakten und Kontext dauerhaft in einem Vektor-Store,
 **strikt getrennt pro Nutzer** — dein Gedächtnis ist an deinen Token gebunden und
 für andere nicht sichtbar.
+
+Dabei handelt es sich um explizite MCP-Tool-Aufrufe, nicht um automatisch in
+jede Unterhaltung eingefügten Gesprächsspeicher. Der Client muss
+`memory_search` oder `memory_list` aufrufen; erst deren Treffer stehen im
+aktuellen Kontext zur Verfügung. Mit `memory_upsert` bleibt eine Information
+über die aktuelle Unterhaltung hinaus erhalten. Claude Code und Codex teilen
+Einträge daher nur, wenn beide als derselbe Stellara-Nutzer authentifiziert
+sind.
 
 | Tool | Was es macht | Art |
 | --- | --- | --- |
@@ -49,6 +59,13 @@ für andere nicht sichtbar.
 | `memory_search` | Durchsucht das eigene Gedächtnis per Vektorsuche und liefert die besten Treffer mit Ähnlichkeits-Score. | Lesend |
 | `memory_list` | Listet die eigenen Gedächtnis-Einträge (neueste zuerst, mit Pagination). Zum Durchsehen oder Exportieren; für relevanzbasiertes Erinnern `memory_search`. | Lesend |
 | `memory_delete` | Löscht Gedächtnis-Einträge per ID oder Filter. Endgültig und pro User. Im Zweifel vorher `memory_list`, um zu sehen, was ein Filter trifft. | Verändert Daten |
+
+Geeignet sind dauerhafte Präferenzen, getroffene Entscheidungen und
+sitzungsübergreifender Kontext. Nicht ins Memory gehören Zugangsdaten und
+andere Geheimnisse, personenbezogene Daten, vorübergehender Aufgabenstatus,
+rohe Chatverläufe oder unbestätigte Annahmen. Repository-Dateien, aktuelle
+Anweisungen des Nutzers und maßgebliche Dokumentation haben immer Vorrang vor
+Memory-Einträgen; bei Widersprüchen sollte der Client den Konflikt offenlegen.
 
 ## `browser_*` — Interaktiver Browser (Playwright)
 
