@@ -4,7 +4,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { parseReviewMarkdown, renderReviewMarkdown } from "./license-audit-review.mjs";
+import {
+  createReviewScope,
+  parseScopedReviewMarkdown,
+  renderScopedReviewMarkdown,
+  reviewGroups,
+  reviewScopeErrors,
+  reviewScopeHash,
+} from "./license-audit-review-scoped.mjs";
+import { parseReviewMarkdown } from "./license-audit-review.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const RUNTIME_PROBE = fileURLToPath(new URL("license-audit-runtime.mjs", import.meta.url));
@@ -316,7 +324,10 @@ function requiredDecisionErrors({ expected, decisions, valid, message }) {
   return [...expected].filter((id) => !valid(decisions[id])).map((id) => `${message}: ${id}`);
 }
 
-export function validateDecisions(evidence, decisions) {
+export function validateDecisions(evidence, decisions, scope) {
+  if (decisions.reviewSchemaVersion === 2)
+    return validateScopedDecisions(evidence, decisions, scope);
+  if (decisions.reviewSchemaVersion !== undefined) return ["Unsupported review decision schema"];
   const expectedComponents = new Set(evidence.inventory.components.map((item) => item.id));
   const expectedFindings = new Set(evidence.findings.map((item) => item.id));
   const componentDecisions = decisions.components ?? {};
@@ -338,6 +349,83 @@ export function validateDecisions(evidence, decisions) {
     }),
     ...unknownDecisionErrors(componentDecisions, expectedComponents, "component"),
     ...unknownDecisionErrors(findingDecisions, expectedFindings, "finding"),
+  ];
+}
+
+function validReviewText(value) {
+  return (
+    typeof value === "string" &&
+    Boolean(value.trim()) &&
+    !/^(?:unknown|none|noassertion|tbd)$/iu.test(value.trim())
+  );
+}
+
+function validGroupDecision(decision) {
+  return Boolean(
+    decision?.decision === "covered" &&
+    ["reviewer", "method", "obligations", "delivery"].every((key) =>
+      validReviewText(decision[key]),
+    ) &&
+    validEvidence(decision.evidence),
+  );
+}
+
+function groupDecisionErrors(expected, actual, rule) {
+  return [
+    ...Object.entries(expected).flatMap(([id, memberIds]) => {
+      const decision = actual[id];
+      if (JSON.stringify(decision?.memberIds) !== JSON.stringify(memberIds)) {
+        return [`Incorrect ${rule.label} membership: ${id}`];
+      }
+      return rule.valid(decision) ? [] : [`Incomplete ${rule.label} decision: ${id}`];
+    }),
+    ...unknownDecisionErrors(actual, new Set(Object.keys(expected)), rule.label),
+  ];
+}
+
+function scopedIndividualErrors(groups, decisions) {
+  const expectedComponents = new Set(groups.individualComponents.map((item) => item.id));
+  const expectedFindings = new Set(groups.individualFindings.map((item) => item.id));
+  const components = decisions.components ?? {};
+  const findings = decisions.findings ?? {};
+  return [
+    ...requiredDecisionErrors({
+      expected: expectedComponents,
+      decisions: components,
+      valid: validComponentDecision,
+      message: "Unapproved or incomplete component decision",
+    }),
+    ...requiredDecisionErrors({
+      expected: expectedFindings,
+      decisions: findings,
+      valid: validFindingDecision,
+      message: "Unresolved reconciliation finding",
+    }),
+    ...unknownDecisionErrors(components, expectedComponents, "component"),
+    ...unknownDecisionErrors(findings, expectedFindings, "finding"),
+  ];
+}
+
+function validateScopedDecisions(evidence, decisions, scope) {
+  if (!scope?.baseDebianIds || !scope?.directDependencyNames) {
+    return ["Scoped review requires its bound review-scope.json"];
+  }
+  const groups = reviewGroups(evidence, scope);
+  return [
+    ...evidenceBindingErrors(evidence, decisions),
+    ...(decisions.scopeSha256 === reviewScopeHash(scope)
+      ? []
+      : ["Review decisions are not bound to this review scope"]),
+    ...boundaryErrors(evidence.boundary),
+    ...scopedIndividualErrors(groups, decisions),
+    ...groupDecisionErrors(groups.components, decisions.groups?.components ?? {}, {
+      valid: validGroupDecision,
+      label: "component group",
+    }),
+    ...groupDecisionErrors(groups.findings, decisions.groups?.findings ?? {}, {
+      valid: validFindingDecision,
+      label: "finding group",
+    }),
   ];
 }
 
@@ -447,6 +535,49 @@ function readEvidence(directory) {
   if (sha256(JSON.stringify(spdx)) !== evidence.sbomSha256)
     fail("SBOM differs from the captured evidence");
   return { evidence, spdx };
+}
+
+function sourceManifest(evidence) {
+  if (!/^[a-f0-9]{40}$/u.test(evidence.sourceCommit)) fail("Invalid source commit in evidence");
+  return execFileSync("git", ["show", `${evidence.sourceCommit}:package.json`], {
+    cwd: ROOT,
+    encoding: "utf8",
+    maxBuffer: 128 * 1024 * 1024,
+  });
+}
+
+function baseDpkgInventory(evidence) {
+  if (!DIGEST_REFERENCE.test(evidence.base.reference))
+    fail("Invalid base image reference in evidence");
+  localImage(evidence.base.reference, evidence.platform);
+  const dollar = String.fromCodePoint(36);
+  const format = `-f=${dollar}{binary:Package}\t${dollar}{Version}\t${dollar}{Architecture}\n`;
+  return run("docker", [
+    "run",
+    "--rm",
+    "--read-only",
+    "--network",
+    "none",
+    "--platform",
+    evidence.platform,
+    "--entrypoint",
+    "dpkg-query",
+    evidence.base.reference,
+    "-W",
+    format,
+  ]);
+}
+
+function readReviewScope(directory, evidence, create = false) {
+  const file = path.join(path.resolve(directory), "review-scope.json");
+  const manifest = sourceManifest(evidence);
+  if (!fs.existsSync(file) && create) {
+    writeJson(file, createReviewScope(evidence, manifest, baseDpkgInventory(evidence)));
+  }
+  const scope = JSON.parse(fs.readFileSync(file, "utf8"));
+  const errors = reviewScopeErrors(evidence, scope, manifest);
+  if (errors.length > 0) fail(errors.join("\n"));
+  return scope;
 }
 
 function captureOptions(argv) {
@@ -607,7 +738,9 @@ function verify(argv) {
   const options = optionsFrom(argv, ["--evidence", "--decisions"]);
   const { evidence } = readEvidence(options["--evidence"]);
   const decisions = JSON.parse(fs.readFileSync(path.resolve(options["--decisions"]), "utf8"));
-  const errors = validateDecisions(evidence, decisions);
+  const scope =
+    decisions.reviewSchemaVersion === 2 ? readReviewScope(options["--evidence"], evidence) : null;
+  const errors = validateDecisions(evidence, decisions, scope);
   if (errors.length > 0) fail(errors.join("\n"));
   process.stdout.write(`Review complete for ${evidence.image.reference} (${evidence.platform})\n`);
 }
@@ -616,7 +749,9 @@ function reviewInit(argv) {
   const options = optionsFrom(argv, ["--evidence", "--output"]);
   const { evidence, spdx } = readEvidence(options["--evidence"]);
   const output = path.resolve(options["--output"]);
-  fs.writeFileSync(output, renderReviewMarkdown(evidence, spdx), { flag: "wx" });
+  if (fs.existsSync(output)) fail(`Output path already exists: ${output}`);
+  const scope = readReviewScope(options["--evidence"], evidence, true);
+  fs.writeFileSync(output, renderScopedReviewMarkdown(evidence, spdx, scope), { flag: "wx" });
   process.stdout.write(`Wrote review worksheet: ${output}\n`);
 }
 
@@ -624,7 +759,13 @@ function reviewImport(argv) {
   const options = optionsFrom(argv, ["--evidence", "--review", "--output"]);
   const { evidence } = readEvidence(options["--evidence"]);
   const markdown = fs.readFileSync(path.resolve(options["--review"]), "utf8");
-  const decisions = parseReviewMarkdown(markdown, evidence);
+  const decisions = markdown.includes("<!-- license-audit-review:v2:")
+    ? parseScopedReviewMarkdown(
+        markdown,
+        evidence,
+        readReviewScope(options["--evidence"], evidence),
+      )
+    : parseReviewMarkdown(markdown, evidence);
   const output = path.resolve(options["--output"]);
   writeJson(output, decisions);
   process.stdout.write(`Imported review decisions: ${output}\n`);
@@ -641,7 +782,8 @@ Capture requires a clean checkout and an immutable registry image (a disposable
 local registry is suitable). It verifies source/base labels and base layers,
 extracts the attached SPDX SBOM for the same digest/platform, and writes new
 evidence.json, sbom.spdx.json, and decisions.template.json files. The template
-contains no legal approvals. Review-init creates a fillable Markdown worksheet;
+contains no legal approvals. Review-init records the direct-dependency and immutable
+base-image scope in review-scope.json and creates a focused Markdown worksheet;
 review-import converts it into decisions.json without approving pending items.
 Both refuse to overwrite their output. Verify checks the completed decisions against the
 bound evidence; missing terms, dispositions, reviewers, or reconciliations exit

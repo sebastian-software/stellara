@@ -68,7 +68,7 @@ docker rm -f stellara-audit-registry
 
 Keep `evidence.json` and `sbom.spdx.json` with the review record. A qualified reviewer checks primary license and notice sources for every component, including Debian's installed copyright files, Node and base-image material, Chromium's bundled third-party material, fonts, native modules, and other copied assets. Reconcile every missing, extra, duplicate, or imprecise SBOM item and every production-boundary finding. Record a named, versioned upstream inventory and evidence link where a bundled component needs one. Do not infer a component's terms from its parent package or treat absent slim-image documentation as proof that no obligation exists.
 
-Create a Markdown worksheet from the captured evidence and have the reviewer complete that file:
+Create a focused Markdown worksheet from the captured evidence and have the reviewer complete that file. `review-init` reads the exact source commit's `package.json` and compares installed Debian package identities with the immutable Node base image (Docker must still be available). It writes a bound `review-scope.json` next to the evidence before writing the worksheet. Preserve this file with the audit record; it is needed by `review-import` and `verify`.
 
 ```sh
 pnpm license:audit review-init \
@@ -84,7 +84,9 @@ pnpm license:audit verify \
   --decisions "$audit_root/candidate/decisions.json"
 ```
 
-Each component and finding has its own `license-review` block. Do not edit its HTML marker or field labels. For example, after checking a component's actual license and distribution obligations, fill its block like this (values are illustrative, not a decision for any real package):
+The full inventory remains in `evidence.json` and the worksheet's collapsed group-member lists. Direct Stellara npm dependencies, browser/assets, and ungrouped exceptions have individual `license-review` blocks. Inherited Debian packages, Debian packages added or changed by the runtime image, Node-base components, and transitive runtime npm packages are separate groups. Common SBOM reconciliation patterns are grouped only where the same resolution can cover every listed member; other findings remain individual. Do not edit HTML markers, field labels, or `review-scope.json`.
+
+For example, after checking an individual component's actual license and distribution obligations, fill its block like this (values are illustrative, not a decision for any real package):
 
 ````md
 ```license-review
@@ -98,9 +100,22 @@ Notice location: /app/THIRD_PARTY_NOTICES.md
 ```
 ````
 
-For a reconciliation finding, use `Decision: resolved`, `Reviewer`, `Resolution`, and at least one `Evidence` line. Add one `Evidence:` line per checked source. Leave `Decision: pending` until that specific item is reviewed. `review-import` writes a new JSON file without overwriting an existing one; use a new output filename for each revision. It rejects missing, duplicate, unknown, or malformed items and stale evidence binding. It does not validate the legal substance or turn pending items into approvals. `verify` remains the completeness gate, so it is expected to fail on a partially filled worksheet.
+For a group, the qualified reviewer confirms the exact listed membership, the license inventory used, how obligations were assessed, and where required materials are delivered:
 
-Each component needs `decision: "approved"`, a reviewer, specific `terms`, evidence links or references, and a `noticeDisposition` action (`included`, `linked`, `source-offer`, or `not-required`). The first three actions also need a location. Each reconciliation finding needs `decision: "resolved"`, a reviewer, resolution, and evidence. `verify` exits nonzero for incomplete or unknown decisions, unresolved findings, a changed SBOM, decisions bound to another evidence file, or a failed production-dependency boundary. It does not verify the legal correctness of the entered terms or that required materials actually reached the distributed image.
+````md
+```license-review
+Decision: covered
+Reviewer: Reviewer name
+Review method: Compared the exact image inventory with primary license records
+Obligations: Recorded package-specific notice and source obligations
+Evidence: review/package-license-inventory.json
+Delivery: Required material retained in the image or linked from the release
+```
+````
+
+A group decision is not a blanket assertion that every member has the same license. If one member needs a different analysis, keep the group pending until its disposition is included in the documented method and evidence. For a reconciliation finding or finding group, use `Decision: resolved`, `Reviewer`, `Resolution`, and at least one `Evidence` line; a group resolution must explain every listed member. Add one `Evidence:` line per checked source. Leave `Decision: pending` until the relevant scope is actually reviewed. `review-import` writes a new JSON file without overwriting an existing one; use a new output filename for each revision. It rejects missing, duplicate, unknown, or malformed items and stale evidence or scope binding. It does not validate legal substance or turn pending items into approvals. `verify` remains the completeness gate, so it is expected to fail on a partially filled worksheet.
+
+Each individual component needs `decision: "approved"`, a reviewer, specific `terms`, evidence links or references, and a `noticeDisposition` action (`included`, `linked`, `source-offer`, or `not-required`). The first three actions also need a location. Each component group needs `decision: "covered"`, a reviewer, review method, obligations, evidence, delivery record, and the exact generated member IDs. Each individual or grouped reconciliation finding needs `decision: "resolved"`, a reviewer, resolution, evidence, and the exact member IDs for a group. `verify` exits nonzero for incomplete or unknown decisions, unresolved findings, changed group membership, a changed SBOM, decisions bound to another evidence or scope file, or a failed production-dependency boundary. It does not verify the legal correctness of entered terms or that required materials actually reached the distributed image.
 
 The reviewer determines whether a `THIRD_PARTY_NOTICES.md`, verbatim license text, source offer, or image or release metadata is required. The maintainer checks the approved distribution location in the built image or release documentation and confirms that `.dockerignore` and the Dockerfile allow required material to be included. Unknown terms, possible incompatibilities, missing materials, or an unresolved exception block sign-off. The maintainer records the qualified review and approves any exception only after its evidence and disposition are documented.
 
@@ -149,10 +164,10 @@ pnpm license:audit verify \
   --decisions "$audit_root/release/decisions.json"
 ```
 
-Candidate decisions cannot be reused without checking and rebinding them to the release evidence. `capture` fails if the release image's source label differs from the tag checkout, its base label or layers differ from the declared immutable base, or the selected platform lacks an attached SPDX document. Record both the index digest and the selected platform manifest digest from the evidence; never substitute one for the other.
+Candidate decisions and `review-scope.json` cannot be reused without checking and rebinding them to the release evidence. `capture` fails if the release image's source label differs from the tag checkout, its base label or layers differ from the declared immutable base, or the selected platform lacks an attached SPDX document. Record both the index digest and the selected platform manifest digest from the evidence; never substitute one for the other.
 
 The published digest is the final audit target even if the candidate passed. If no post-#17 release exists, leave release sign-off open. A green `verify` is necessary for the review record, but the maintainer signs off only after the qualified reviewer has resolved every component and finding and confirmed the required distributed materials.
 
 ## Refresh the evidence
 
-Repeat `capture`, review, and `verify` when dependencies or `pnpm-lock.yaml`, the Node base digest, Dockerfile, Playwright browser version or assets, Debian packages, fonts, native binaries, copied runtime files, SBOM generation, build inputs, platform, or published image digest changes. A source-commit or evidence change invalidates the previous decision binding. Keep the immutable references, platform, `evidence.json`, `sbom.spdx.json`, completed decisions, reviewer identity, and release sign-off together so the next review can compare them.
+Repeat `capture`, review, and `verify` when dependencies or `pnpm-lock.yaml`, the Node base digest, Dockerfile, Playwright browser version or assets, Debian packages, fonts, native binaries, copied runtime files, SBOM generation, build inputs, platform, or published image digest changes. A source-commit or evidence change invalidates the previous decision binding. Keep the immutable references, platform, `evidence.json`, `sbom.spdx.json`, `review-scope.json`, completed decisions, reviewer identity, and release sign-off together so the next review can compare them.
