@@ -16,6 +16,8 @@ Stellara verwendet [release-please](https://github.com/googleapis/release-please
 
 Normale Pushes nach `main`, Pull Requests und manuell erzeugte Tags veröffentlichen kein Container-Image.
 
+Für die Lizenzfreigabe prüft der Maintainer den exakten veröffentlichten Image-Digest nach dem Verfahren im [Container-Lizenzaudit](container-license-audit.md). Eine Prüfung eines lokalen Kandidaten allein genügt nicht; die qualifizierte Prüfung der Lizenz- und Hinweispflichten sowie erforderlicher Materialien muss auch für den veröffentlichten Digest dokumentiert sein.
+
 ## Pre-1.0-Versionierung
 
 Solange die Version unter `1.0.0` liegt, gilt:

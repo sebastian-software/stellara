@@ -50,6 +50,17 @@ jobs:
           fi
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
           echo "minor=${version%.*}" >> "${GITHUB_OUTPUT}"
+          echo "source_commit=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+
+      - name: Resolve immutable Node base image
+        id: base
+        run: |
+          digest="$(docker buildx imagetools inspect node:24-bookworm-slim --format '{{json .}}' | jq -er '.manifest.digest')"
+          if [[ ! "${digest}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            echo "::error::Could not resolve the Node base image digest"
+            exit 1
+          fi
+          echo "image=node:24-bookworm-slim@${digest}" >> "${GITHUB_OUTPUT}"
 
       - name: Compute image tags
         id: tags
@@ -74,6 +85,8 @@ jobs:
           push: true
           build-args: |
             APP_VERSION=${{ steps.version.outputs.version }}
+            NODE_BASE_IMAGE=${{ steps.base.outputs.image }}
+            SOURCE_COMMIT=${{ steps.version.outputs.source_commit }}
           tags: ${{ steps.tags.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
