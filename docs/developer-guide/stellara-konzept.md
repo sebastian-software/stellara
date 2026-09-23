@@ -235,11 +235,10 @@ ein kurzer Health-Flap (Container-Stop bis `start_period`
 + erster erfolgreicher Healthcheck), in dem der Edge/Reverse Proxy 502 liefern
 kann. Alte Tokens sind nach dem Wechsel sofort ungültig.
 
-#### 6.5.2 Sofort-Revocation eines geleakten Tokens
+#### 6.5.2 Widerruf eines geleakten Tokens
 
-Wenn ein Token kompromittiert ist und ein vollständiger
-Container-Restart vermieden oder verzögert werden soll,
-kann der Token-Wert in `STELLARA_REVOKED_TOKENS`
+Wenn ein Token kompromittiert ist, kann sein Wert in
+`STELLARA_REVOKED_TOKENS`
 eingetragen werden (komma-separierte Liste der rohen
 Token-Werte):
 
@@ -247,13 +246,12 @@ Token-Werte):
 STELLARA_REVOKED_TOKENS=<geleakter-token-1>,<geleakter-token-2>
 ```
 
-Das Gateway prüft die Revocation-Liste vor dem regulären
-Token-Lookup und antwortet mit `401 UNAUTHORIZED` — exakt
-wie bei einem unbekannten Token, sodass ein Angreifer den
-Unterschied nicht messen kann. Der Eintrag wird beim
-Container-Start eingelesen; ein Reload ohne Restart ist
-bewusst nicht vorgesehen, weil die Quelle der Wahrheit
-weiterhin `.env` bleibt.
+Das Gateway prüft statische Tokens aus Konfiguration und Sperrliste mit
+einem gemeinsamen Resolver und antwortet bei gesperrten und unbekannten
+Werten gleich mit `401 UNAUTHORIZED`. Auch der OAuth-Login verwendet diesen
+Resolver. Der Eintrag wird beim Container-Start eingelesen; ein Reload ohne
+Restart ist nicht vorgesehen. Exakt gelistete Access-JWTs werden vor ihrer
+Signaturprüfung abgewiesen.
 
 Ablauf für den Incident:
 
@@ -271,10 +269,13 @@ Ablauf für den Incident:
 Die in §6.5.3 erwähnte JWT-Direction wurde mit §6.6
 umgesetzt: kurzlebige Access-Tokens plus rotierender
 Refresh-Token sind seit Plan 0004 verfügbar. Die
-statische Revocation-Liste bleibt für direkt mit
-`STELLARA_TOKEN_<USERID>` authentisierte Aufrufe
-weiterhin nutzbar und wird beim Boot automatisch auf
-verwaiste OAuth-Sessions angewendet.
+statische Revocation-Liste bleibt für direkte Bearer-Aufrufe und den
+OAuth-Login nutzbar. Der Boot-Abgleich löscht bei Verlust eines zuvor
+wirksamen Token-Fingerprints die ausstehenden Codes, Refresh-Tokens und
+Sessions des betroffenen Users. Bereits ausgegebene Access-JWTs bleiben bis
+zu ihrem `exp` gültig. Details zu Erststart, Rollback und Schutz der
+SQLite-Sicherung stehen in der
+[Konfigurationsreferenz](../operations/configuration.md).
 
 ---
 
@@ -348,7 +349,7 @@ mit 401 abgewiesen — kein Fallback auf die
 Token-Map, damit ein Angreifer keine Format-
 Confusion ausnutzen kann. Bei Rotation eines
 `STELLARA_TOKEN_<USERID>` werden beim nächsten Boot
-alle Refresh-Tokens und Sessions dieses Users
+die ausstehenden Codes, Refresh-Tokens und Sessions dieses Users
 invalidiert.
 
 DCR-Sicherheit: `/oauth/register` ist offen
@@ -446,8 +447,9 @@ Der Edge/Reverse Proxy setzt die vereinbarten Forwarding-Header. Das Gateway:
 
 - vertraut `X-Forwarded-For` und optional weiteren vereinbarten Forwarding-Headern nur, wenn der
   direkte Peer (TCP-Source-IP) in `TRUSTED_PROXY_CIDRS` liegt
-- nutzt den Wert für Logging (`clientIp`) und als Fallback-Key
-  für Rate-Limiting bei unauthentifizierten 401-Versuchen
+- nutzt den Wert für Logging (`clientIp`) und für das vorgelagerte
+  IP-Rate-Limit bei Requests ohne nutzbaren Bearer-Header. Ungültige
+  oder gesperrte Bearer-Werte fallen derzeit nicht in diesen Bucket
 - ignoriert beliebige `X-Forwarded-For`-Header von extern
 
 `trustProxy` in Fastify ist entsprechend konfiguriert
@@ -1678,7 +1680,7 @@ EMBEDDINGS_API_KEY=
 EMBEDDINGS_DIMENSIONS=1536
 
 LOG_LEVEL=info
-# Globale Obergrenze, muss >= max per-Tool-Timeout (§17) sein
+# Frist für Graceful Shutdown; kein Request- oder Tool-Timeout
 REQUEST_TIMEOUT_MS=90000
 
 # Rate Limiting (pro Token)
@@ -1910,8 +1912,8 @@ Enforcement:
 
 - Jeder Upstream-Call läuft mit einem `AbortController`,
   der nach Ablauf das `fetch` abbricht.
-- Die Fastify-Route setzt zusätzlich ein Gesamt-Timeout
-  (siehe `REQUEST_TIMEOUT_MS` als Obergrenze).
+- `REQUEST_TIMEOUT_MS` begrenzt nur den Graceful Shutdown und ist
+  keine zusätzliche Fastify-Request-Frist.
 - Bei Ablauf wird `504 TIMEOUT` (§16) zurückgegeben,
   laufende Upstream-Requests werden abgebrochen.
 
@@ -2241,14 +2243,20 @@ einer späteren Metrikpipeline erforderlich.
 
 ## 22. Rate-Limiting
 
-`@fastify/rate-limit` mit Per-Token-Bucket:
+Zwei getrennte Buckets schützen authentifizierte Requests und Requests ohne
+nutzbaren Bearer-Header:
 
 ```text
-Default:        RATE_LIMIT_MAX requests pro RATE_LIMIT_WINDOW_MS
-Schlüssel:      user-id (aus §6.3) bei erfolgreich aufgelöstem Token
-                fallback clientIp (aus §7.1) für 401-Versuche ohne Token
+Authentifiziert: RATE_LIMIT_MAX pro RATE_LIMIT_WINDOW_MS; Schlüssel user-id
+Ohne Bearer:     UNAUTH_RATE_LIMIT_MAX pro UNAUTH_RATE_LIMIT_WINDOW_MS;
+                Schlüssel clientIp (aus §7.1)
 Antwort:        429 RATE_LIMITED mit Retry-After-Header
 ```
+
+Der vorgelagerte IP-Bucket überspringt Requests mit Bearer-Header bereits vor
+der Authentifizierung. Ungültige oder gesperrte Bearer-Versuche werden deshalb
+von keinem dieser beiden Buckets gezählt; ein Redesign dieses Hooks ist nicht
+Teil dieser Änderung.
 
 Health-, Readiness- und `/openapi.json`-Endpunkte sind
 ausgenommen (siehe §6.4).

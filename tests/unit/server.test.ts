@@ -1,15 +1,105 @@
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Writable } from "node:stream";
 import { pino } from "pino";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod/v4";
 
 import { createLoggerOptions, LOG_REDACT_PATHS } from "../../src/logger.js";
+import { signAccessToken } from "../../src/oauth/tokens.js";
 import { buildApp } from "../../src/server.js";
 import { makeTestConfig, TEST_TOKEN_USER_A } from "./helpers/test-config.js";
 
 describe("buildApp", () => {
+  it("reconciles a rotated token across two app lifecycles while retaining signing identity", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "stellara-reconcile-app-"));
+    const rotatedToken = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+    const originalConfig = makeTestConfig({ STELLARA_DATA_DIR: directory });
+    let jwt: string;
+    let originalKid: string;
+    try {
+      const first = await buildApp(originalConfig);
+      try {
+        const storage = first.services.oauth.storage;
+        originalKid = first.services.oauth.signingKey.kid;
+        storage.insertClient({
+          client_id: "retained-client",
+          client_name: "Test",
+          redirect_uris: "[]",
+          created_at: 1,
+          last_used_at: 1,
+        });
+        storage.insertCode({
+          code: "pending-code",
+          client_id: "retained-client",
+          user_id: "user_a",
+          code_challenge: "challenge",
+          redirect_uri: "https://client.example.test/callback",
+          scope: "mcp",
+          expires_at: Date.now() + 60_000,
+        });
+        storage.insertRefreshToken({
+          token: "pending-refresh",
+          client_id: "retained-client",
+          user_id: "user_a",
+          scope: "mcp",
+          issued_at: Date.now(),
+          expires_at: Date.now() + 60_000,
+          rotated_to: null,
+        });
+        storage.insertSession({
+          session_id: "pending-session",
+          user_id: "user_a",
+          issued_at: Date.now(),
+          expires_at: Date.now() + 60_000,
+        });
+        jwt = await signAccessToken(first.services.oauth.signingKey, {
+          issuer: originalConfig.publicBaseUrl,
+          audience: `${originalConfig.publicBaseUrl}/mcp`,
+          userId: "user_a",
+          clientId: "retained-client",
+          scope: "mcp",
+          ttlSeconds: 60,
+        });
+      } finally {
+        await first.close();
+      }
+
+      const second = await buildApp(
+        makeTestConfig({ STELLARA_DATA_DIR: directory, STELLARA_TOKEN_USER_A: rotatedToken }),
+      );
+      second.post("/tools/probe", (request) => ({ userId: request.userId }));
+      try {
+        const storage = second.services.oauth.storage;
+        expect(storage.getCode("pending-code")).toBeUndefined();
+        expect(storage.getRefreshToken("pending-refresh")).toBeUndefined();
+        expect(storage.getSession("pending-session")).toBeUndefined();
+        expect(storage.getClient("retained-client")).toBeDefined();
+        expect(second.services.oauth.signingKey.kid).toBe(originalKid);
+        const existingAccess = await second.inject({
+          method: "POST",
+          url: "/tools/probe",
+          headers: { authorization: `Bearer ${jwt}` },
+        });
+        expect(existingAccess.statusCode).toBe(200);
+        expect(existingAccess.json()).toStrictEqual({ userId: "user_a" });
+        const oldStatic = await second.inject({
+          method: "POST",
+          url: "/tools/probe",
+          headers: { authorization: `Bearer ${TEST_TOKEN_USER_A}` },
+        });
+        expect(oldStatic.statusCode).toBe(401);
+      } finally {
+        await second.close();
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("returns a Fastify instance ready for in-memory injection", async () => {
     const app = await buildApp(makeTestConfig());
     try {

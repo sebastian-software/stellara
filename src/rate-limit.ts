@@ -6,9 +6,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
  * Two layered buckets:
  *
  *  1. {@link registerUnauthRateLimit} — runs BEFORE the auth hook and limits
- *     unauthenticated requests by `request.ip`. This stops token-brute-force
- *     attempts and audit-log floods that the per-user limiter would never
- *     see (every 401 short-circuits before `request.userId` is set).
+ *     requests without a usable Bearer header by `request.ip`. Invalid or
+ *     revoked Bearer attempts bypass this tier and the per-user tier.
  *  2. {@link registerRateLimit} — `@fastify/rate-limit` with a per-user key,
  *     registered AFTER the auth hook.
  *
@@ -123,11 +122,9 @@ function sendUnauthRateLimited(
 
 /**
  * Registers an `onRequest` hook that rate-limits unauthenticated requests by
- * `request.ip` BEFORE the auth hook can reject them with 401. Without this
- * tier the per-user limiter (which keys on `request.userId`) never sees the
- * traffic — every brute-force attempt would short-circuit in the auth hook
- * and the only side-effect would be an audit-log entry. Logging is therefore
- * also a DoS vector that this hook contains.
+ * `request.ip` BEFORE the auth hook can reject them with 401. This tier does
+ * not count attempts that carry a Bearer header; invalid or revoked Bearer
+ * values are rejected by auth before the per-user limiter runs.
  *
  * Implementation note: the counter map lives in-process. It does NOT survive
  * a restart and does NOT span replicas. That is acceptable for Stellara's

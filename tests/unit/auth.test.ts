@@ -259,6 +259,56 @@ describe("createAuthHook", () => {
     }
   });
 
+  it("returns the same direct-auth error for revoked and unknown static tokens", async () => {
+    const app = await buildApp(makeTestConfig({ STELLARA_REVOKED_TOKENS: TEST_TOKEN_USER_A }));
+    app.post("/tools/probe", () => ({ ok: true }));
+    try {
+      const revoked = await app.inject({
+        method: "POST",
+        url: "/tools/probe",
+        headers: { authorization: `Bearer ${TEST_TOKEN_USER_A}` },
+      });
+      const unknown = await app.inject({
+        method: "POST",
+        url: "/tools/probe",
+        headers: { authorization: "Bearer unknown-static-token" },
+      });
+      expect(revoked.statusCode).toBe(401);
+      expect(unknown.statusCode).toBe(401);
+      expect(revoked.json()).toStrictEqual(unknown.json());
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("rejects an exact revoked JWT before JWT verification", async () => {
+    const revokedTokens = new Set<string>();
+    const config = { ...makeTestConfig(), revokedTokens };
+    const app = await buildApp(config);
+    app.post("/tools/probe", () => ({ ok: true }));
+    try {
+      const jwt = await signAccessToken(app.services.oauth.signingKey, {
+        issuer: config.publicBaseUrl,
+        audience: `${config.publicBaseUrl}/mcp`,
+        userId: "user_a",
+        clientId: "oauth-client",
+        scope: "mcp",
+        ttlSeconds: 60,
+      });
+      const headers = { authorization: `Bearer ${jwt}` };
+      const accepted = await app.inject({ method: "POST", url: "/tools/probe", headers });
+      expect(accepted.statusCode).toBe(200);
+      revokedTokens.add(jwt);
+      const rejected = await app.inject({ method: "POST", url: "/tools/probe", headers });
+      expect(rejected.statusCode).toBe(401);
+      expect(rejected.json<{ error: { message: string } }>().error.message).toBe(
+        "Unknown bearer token",
+      );
+    } finally {
+      await app.close();
+    }
+  });
+
   it("ignores empty fragments in STELLARA_REVOKED_TOKENS", async () => {
     const config = makeTestConfig({
       STELLARA_REVOKED_TOKENS: ` , ${TEST_TOKEN_USER_B} ,, `,

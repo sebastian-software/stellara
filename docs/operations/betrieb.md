@@ -1,6 +1,7 @@
 # Betrieb
 
 Diese Seite beschreibt den Betrieb von Stellara aus Betreiber-Sicht: OAuth-Server-Setup, Volume-Mount, Einbindung von LLM-Apps sowie Routine-Operationen wie Token-Rotation und Storage-Reset.
+Die vollständige Liste der Laufzeitvariablen und ihrer Abhängigkeiten steht in der [Konfigurationsreferenz](configuration.md).
 
 ## Externes Proxy-Netz konfigurieren
 
@@ -67,7 +68,7 @@ volumes:
 
 Beim ersten Boot wird das Schema migriert und ein RSA-2048-Keypair erzeugt. Der private Schlüssel verlässt den Container nicht; der öffentliche Schlüssel ist über `GET /oauth/jwks` abrufbar.
 
-**Backup-Hinweis:** `./stellara-data/stellara.db` enthält den Signing-Key. Snapshot, rsync oder `tar` genügen — die Datei ist im WAL-Mode auch für laufende Container snapshot-sicher.
+**Backup-Hinweis:** `./stellara-data/stellara.db` enthält den privaten Signing-Key, OAuth-Credentials und Fingerprints statischer Tokens. Die Datenbank und ihre Sicherungen sind sensible Daten. Für eine konsistente Sicherung den Dienst vor dem Kopieren anhalten oder ein SQLite-taugliches Backup-Verfahren verwenden; das isolierte Kopieren der laufenden Datenbankdatei im WAL-Modus genügt nicht.
 
 **UID/GID:** Der Container läuft als `app` (UID/GID `999`). Das gemountete Verzeichnis (und alle bestehenden Dateien darin) muss `999:999` gehören, sonst scheitert der Boot mit `SQLITE_CANTOPEN`. Beim Upgrade von einer früheren Alpine-basierten Stellara-Version (UID `100`) müssen die Eigentümer einmalig angepasst werden:
 
@@ -105,13 +106,20 @@ Für das Rollout lassen sich diese Events nach `protocolEra`, `protocolVersion` 
 
 ## Operations
 
-- **Token-Rotation:** Wenn `STELLARA_TOKEN_<USERID>` in `.env` rotiert wird, invalidiert der nächste Container-Boot automatisch alle Refresh-Tokens und Sessions des betroffenen Users — die Clients müssen sich erneut einloggen.
+- **Token-Rotation und Widerruf:** Änderungen an `.env` benötigen einen Container-Neustart. Wird ein zuvor wirksamer statischer Token entfernt, rotiert oder neu in `STELLARA_REVOKED_TOKENS` aufgenommen, löscht der nächste Boot die ausstehenden OAuth-Codes, Refresh-Tokens und Sessions dieses Users in einer Transaktion. Zusätzlich hinzugefügte gültige Tokens ändern bestehende OAuth-Autorisierungen nicht. Bereits ausgegebene Access-JWTs bleiben bis zu ihrem `exp` gültig; eine Änderung der TTL wirkt nicht rückwirkend.
 - **Storage-Reset:** Bei massivem Schaden (z. B. korruptes SQLite-File) kann `./stellara-data/stellara.db` gelöscht werden. Beim nächsten Boot wird ein neues Schema und ein **neuer** Signing-Key erzeugt — alle bisherigen Access-Tokens werden ungültig, MCP-Clients müssen sich neu authorizen.
 - **Audit-Trail:** Jeder OAuth-Event landet in den Pino-Logs (`oauth_client_registered`, `oauth_login_succeeded`, `oauth_token_issued`, `oauth_refresh_replay_detected`, `oauth_resource_legacy_default`, …). Client-IDs werden für die Korrelation gehasht; Token-Werte erscheinen niemals im Log.
 - **CIMD-Überlast:** HTTP 429 mit `Retry-After` zeigt ein ausgeschöpftes Quell-IP-Budget. HTTP 503 mit `temporarily_unavailable` zeigt ein ausgeschöpftes globales In-flight-Limit. Beide Antworten bleiben lokal und werden nicht an eine noch unverifizierte Redirect-URI weitergeleitet.
 
+### Upgrade des Token-Abgleichs
+
+Vor dem Upgrade das SQLite-Volume konsistent sichern. Beim ersten Start mit dem Token-Snapshot werden vorhandene OAuth-Codes, Refresh-Tokens und Sessions einmalig gelöscht; Clients und Signing-Key bleiben erhalten. Die Nutzer müssen den OAuth-Flow erneut durchlaufen. Weitere unveränderte Starts löschen nichts. Auch bei fehlenden, beschädigten oder nicht unterstützten Snapshot-Metadaten wird der Autorisierungszustand einmalig vollständig gelöscht. Ein SQL-Fehler bricht den Start ab und setzt die Löschungen samt Snapshot-Änderung zurück. Das strukturierte Logevent `oauth_static_token_reconciled` enthält nur Zähler und Status, keine Tokenwerte oder Fingerprints.
+
+Ein Rollback auf einen älteren Build benötigt keine Datenmigration, stellt aber dessen frühere Lücke bei OAuth-Login und fortbestehendem OAuth-Zustand wieder her. Den Widerrufseintrag beibehalten, den alten Build nur für die notwendige Dauer verwenden und anschließend wieder auf den korrigierten Build vorrollen. Der erneute Start gleicht den gespeicherten Snapshot mit den aktuell wirksamen Tokens ab. Die vollständigen Schritte und Sicherheitsgrenzen stehen in der [Konfigurationsreferenz](configuration.md).
+
 ## Weiterführende Dokumentation
 
 - Release-Prozess: [`release-prozess.md`](release-prozess.md)
+- Laufzeitkonfiguration: [`configuration.md`](configuration.md)
 - Architektur und Tool-Design: [`../developer-guide/stellara-konzept.md`](../developer-guide/stellara-konzept.md)
 - LLM-App-Einbindung und Auth (End-User-Sicht): [`../user-guide/llm-clients-einbinden.md`](../user-guide/llm-clients-einbinden.md)

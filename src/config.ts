@@ -2,7 +2,7 @@
  * Environment loading and validation for Stellara.
  *
  * Builds a typed {@link Config} object from `process.env`, validating every
- * variable listed in concept §12 plus the runtime `APP_VERSION`. Bearer
+ * variable listed in concept §12 plus build-owned `APP_VERSION`. Bearer
  * tokens follow the `STELLARA_TOKEN_<USERID>` convention from §6.3 and are
  * collected into a `Map<token, userId>` during loading; the suffix becomes
  * the lowercased userId.
@@ -62,7 +62,7 @@ export function isEnvFlagTrue(raw: string | undefined, fallback: boolean): boole
   return normalized !== "false" && normalized !== "0";
 }
 
-const envSchema = z
+export const envSchema = z
   .object({
     NODE_ENV: z
       .enum(["development", "test", "production"])
@@ -91,7 +91,7 @@ const envSchema = z
 
     // Default per §12.
     LOG_LEVEL: z.enum(LOG_LEVELS).default("info"),
-    // Default per §12 — global hard cap that must stay above per-route timeouts (§17).
+    // Default per §12 — deadline for graceful shutdown, not request handling.
     REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(90_000),
 
     // Defaults per §12.
@@ -100,17 +100,17 @@ const envSchema = z
 
     // Pre-auth tier for unauthenticated requests (concept §7.1, §22). A
     // separate, tighter bucket — keyed on `request.ip` — runs BEFORE the auth
-    // hook so token-brute-force attempts cannot hide behind 401 responses that
-    // never reach the per-user limiter. Defaults are intentionally aggressive
-    // because legitimate clients always carry a valid bearer token.
+    // hook. Only requests without a usable Bearer header enter this bucket;
+    // invalid or revoked Bearer attempts currently bypass it.
     UNAUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
     UNAUTH_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
 
     // Comma-separated list of revoked bearer token values (§6.5 Token-
     // Rotation & Revocation). Tokens listed here are rejected with 401 even if
     // their `STELLARA_TOKEN_<USERID>` entry still exists — this gives ops a
-    // restart-free path to disable a leaked credential until the configured
-    // env var can be rotated. Empty string (default) means no revocations.
+    // path to disable a leaked credential at the next process restart until
+    // the configured env var can be rotated. Empty string (default) means no
+    // revocations.
     STELLARA_REVOKED_TOKENS: z.string().default(""),
 
     // OAuth subsystem (§6.6). The data dir holds `stellara.db`, the SQLite
@@ -360,9 +360,8 @@ export type Config = {
   tokens: ReadonlyMap<string, string>;
 
   /**
-   * Set of revoked bearer token values (§6.5). Checked before the regular
-   * `tokens` lookup so a leaked credential can be disabled without an
-   * env-var rotation + container restart.
+   * Set of revoked bearer token values (§6.5). Applied to direct static
+   * authentication and OAuth login after a process or container restart.
    */
   revokedTokens: ReadonlySet<string>;
 
