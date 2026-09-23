@@ -2058,28 +2058,46 @@ docker logs -f stellara
 ### Multi-Stage-Dockerfile (Skizze)
 
 ```dockerfile
-# build
-FROM node:24-alpine AS build
+# production dependencies
+FROM node:24-bookworm-slim AS prod-deps
 WORKDIR /app
-RUN corepack enable
-COPY package.json pnpm-lock.yaml ./
+ENV NODE_ENV=production
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN corepack enable \
+  && corepack prepare "$(node -p "require('./package.json').packageManager")" --activate
+RUN pnpm install --prod --frozen-lockfile
+
+# build
+FROM node:24-bookworm-slim AS build
+WORKDIR /app
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN corepack enable \
+  && corepack prepare "$(node -p "require('./package.json').packageManager")" --activate
 RUN pnpm install --frozen-lockfile
+RUN pnpm exec playwright install --with-deps chromium
 COPY . .
 RUN pnpm build
-RUN pnpm prune --prod
 
 # runtime
-FROM node:24-alpine
+FROM node:24-bookworm-slim
 ARG APP_VERSION=0.0.0
 WORKDIR /app
-RUN addgroup -S app && adduser -S app -G app
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+# Installiert tini und die Chromium-Laufzeitbibliotheken und legt app:app
+# mit der stabilen UID/GID 999 sowie das beschreibbare /data-Verzeichnis an.
+COPY --from=prod-deps --chown=app:app /app/node_modules ./node_modules
 COPY --from=build --chown=app:app /app/dist        ./dist
-COPY --from=build --chown=app:app /app/node_modules ./node_modules
 COPY --from=build --chown=app:app /app/package.json ./
+COPY --from=build --chown=app:app /app/LICENSE      /app/LICENSE
+COPY --from=build --chown=app:app /ms-playwright    /ms-playwright
 USER app
-ENV NODE_ENV=production
-ENV APP_VERSION=${APP_VERSION}
+ENV NODE_ENV=production \
+    APP_VERSION=${APP_VERSION} \
+    STELLARA_DATA_DIR=/data
+VOLUME ["/data"]
 EXPOSE 8787
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["node", "dist/server.js"]
 ```
 

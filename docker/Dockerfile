@@ -1,7 +1,16 @@
-# build (bookworm-slim so the Playwright Chromium installer finds the
-# glibc + apt ecosystem it expects; better-sqlite3 ships a glibc prebuilt
-# so the dedicated `deps` build stage from the Alpine image is no longer
-# necessary).
+# production dependencies (kept separate so the runtime image never receives
+# build, test, lint, or formatting packages).
+FROM node:24-bookworm-slim AS prod-deps
+WORKDIR /app
+ENV NODE_ENV=production \
+    COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN corepack enable \
+  && corepack prepare "$(node -p "require('./package.json').packageManager")" --activate
+RUN pnpm install --prod --frozen-lockfile
+
+# build (bookworm-slim keeps the Playwright Chromium and better-sqlite3
+# artifacts compatible with the runtime stage).
 FROM node:24-bookworm-slim AS build
 WORKDIR /app
 ENV NODE_ENV=development \
@@ -64,7 +73,7 @@ RUN apt-get update \
   && useradd --system --uid 999 --gid 999 --create-home --home-dir /home/app app \
   && mkdir -p /data \
   && chown app:app /data
-COPY --from=build --chown=app:app /app/node_modules ./node_modules
+COPY --from=prod-deps --chown=app:app /app/node_modules ./node_modules
 COPY --from=build --chown=app:app /app/dist         ./dist
 COPY --from=build --chown=app:app /app/package.json ./
 COPY --from=build --chown=app:app /app/LICENSE      /app/LICENSE

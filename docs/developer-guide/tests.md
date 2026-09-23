@@ -1,15 +1,26 @@
 # Tests
 
-Die Test-Suite besteht aus zwei bewusst getrennten Schichten:
+Die Test-Suite besteht aus drei bewusst getrennten Schichten:
 
 - **Unit-Tests** (`tests/unit/**`) laufen über `pnpm test` und `pnpm agent:check`. Sie verwenden gestubbte Service-Clients, benötigen kein Netzwerk und keine externen Zugangsdaten.
 - **Integrationstests** (`tests/integration/**`) laufen ausschließlich über `pnpm test:integration`. Sie senden echte Aufrufe an Firecrawl, Exa, Qdrant und den Embedding-Provider.
+- **Container-Tests** (`tests/container/**`) laufen ausschließlich über `pnpm test:container`. Sie bauen das finale Runtime-Image und prüfen Produktionsabhängigkeiten, Image-Metadaten, SQLite, Playwright sowie den Server-Healthcheck in isolierten Containern.
 
 ## GitHub Actions
 
 Pull Requests und Merge-Queue-Gruppen führen auf einem GitHub-hosted Runner exakt `pnpm agent:check` aus. Der Workflow besitzt nur `contents: read` und erhält weder Secrets noch OIDC-Tokens. Fork-PRs werden niemals auf einem Self-hosted Runner ausgeführt.
 
 Live-Integrationstests laufen nicht in GitHub Actions. Dadurch bleiben Pull-Request-Checks reproduzierbar und benötigen keine Providerzugänge.
+
+`pnpm agent:check` umfasst weder Integrations- noch Container-Tests. Das verpflichtende Quality Gate bleibt dadurch Docker-unabhängig und hermetisch.
+
+## Lokale Container-Tests
+
+`pnpm test:container` benötigt eine laufende Docker Engine und Zugriff auf die für den Image-Build erforderlichen Basis-Images und Pakete. Der Aufruf verwendet die in `package.json` festgelegte pnpm-Version und führt ausschließlich die serielle Suite aus `tests/container/**` aus.
+
+Die Test-Container selbst laufen mit `--network none`. Die Suite liest keine `.env`-Datei, übernimmt keine Providerzugänge aus der Host-Umgebung und greift nicht auf `stellara-data/` zu. Stattdessen verwendet sie nicht geheime Fixture-Werte, eindeutig benannte temporäre Docker-Ressourcen und entfernt Container, Volumes und das Test-Image nach jedem behandelten Lauf.
+
+Der Test schlägt mit einer verständlichen Meldung fehl, wenn der Docker-Daemon nicht erreichbar ist. Für die Browser-Prüfung müssen genügend Arbeitsspeicher und freier Plattenplatz für das Chromium-Image verfügbar sein.
 
 ## Lokale Integrationstests
 

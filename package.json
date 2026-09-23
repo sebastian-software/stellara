@@ -20,6 +20,7 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:container": "vitest run --config vitest.container.config.ts",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "agent:check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test",
     "migrate:embeddings": "tsx scripts/migrate-embeddings.ts"
