@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
+import { parseReviewMarkdown, renderReviewMarkdown } from "../../scripts/license-audit-review.mjs";
 import {
   checkProductionBoundary,
   parseProductionClosure,
@@ -327,6 +328,90 @@ describe("review decisions", () => {
         "Runtime image contains development-only npm packages",
         "Runtime image contains npm packages outside the production lockfile closure",
       ]),
+    );
+  });
+});
+
+describe("Markdown review worksheet", () => {
+  function worksheet() {
+    const { evidence } = evidenceWithDecisions();
+    const reviewEvidence = {
+      ...evidence,
+      image: { reference: `localhost/stellara@sha256:${"a".repeat(64)}` },
+      platform: "linux/amd64",
+      sourceCommit: "source-commit",
+    };
+    const spdx = { packages: [spdxPackage("SPDXRef-server", "@example/server", "1.0.0")] };
+    return { evidence: reviewEvidence, markdown: renderReviewMarkdown(reviewEvidence, spdx) };
+  }
+
+  it("renders observed data but imports no implicit approvals", () => {
+    const { evidence, markdown } = worksheet();
+    const decisions = parseReviewMarkdown(markdown, evidence);
+
+    expect(markdown).toContain("SPDX-Lizenzangabe (ungeprüft)");
+    expect(decisions.components["npm:server"]).toStrictEqual({
+      decision: null,
+      reviewer: null,
+      terms: null,
+      evidence: [],
+      noticeDisposition: { action: null, location: null },
+    });
+    expect(decisions.findings["missing-sbom:npm:server"]?.decision).toBeNull();
+    expect(validateDecisions(evidence, decisions)).toContain(
+      "Unapproved or incomplete component decision: npm:server",
+    );
+  });
+
+  it("imports explicit component and finding decisions and repeated evidence lines", () => {
+    const { evidence, markdown } = worksheet();
+    const completed = markdown
+      .replaceAll("Decision: pending", "Decision: approved")
+      .replace(
+        "Decision: approved\nReviewer:\nResolution:",
+        "Decision: resolved\nReviewer:\nResolution:",
+      )
+      .replaceAll("Reviewer:\n", "Reviewer: Qualified reviewer\n")
+      .replace("Terms:\n", "Terms: MIT\n")
+      .replace(
+        "Evidence:\nNotice action:",
+        "Evidence: /app/LICENSE\nEvidence: https://example.test/source\nNotice action:",
+      )
+      .replace("Notice action: pending", "Notice action: linked")
+      .replace("Notice location:\n", "Notice location: release/THIRD_PARTY_NOTICES.md\n")
+      .replace("Resolution:\n", "Resolution: Matched the installed package to its source\n")
+      .replace(
+        "Resolution: Matched the installed package to its source\nEvidence:\n",
+        "Resolution: Matched the installed package to its source\nEvidence: /app/package.json\n",
+      );
+
+    const decisions = parseReviewMarkdown(completed, evidence);
+
+    expect(decisions.components["npm:server"]?.evidence).toStrictEqual([
+      "/app/LICENSE",
+      "https://example.test/source",
+    ]);
+    expect(validateDecisions(evidence, decisions)).toStrictEqual([]);
+  });
+
+  it("rejects a stale worksheet, duplicate item, missing item, and malformed fields", () => {
+    const { evidence, markdown } = worksheet();
+    const componentSection = markdown.slice(
+      markdown.indexOf("<!-- license-audit:component:"),
+      markdown.indexOf("## Abgleichbefunde"),
+    );
+
+    expect(() => parseReviewMarkdown(markdown, { ...evidence, sourceCommit: "other" })).toThrow(
+      /not bound/u,
+    );
+    expect(() => parseReviewMarkdown(`${markdown}\n${componentSection}`, evidence)).toThrow(
+      /Duplicate component/u,
+    );
+    expect(() => parseReviewMarkdown(markdown.replace(componentSection, ""), evidence)).toThrow(
+      /Missing component/u,
+    );
+    expect(() => parseReviewMarkdown(markdown.replace("Terms:", "License:"), evidence)).toThrow(
+      /Unexpected or out-of-order/u,
     );
   });
 });

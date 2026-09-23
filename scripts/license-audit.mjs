@@ -4,6 +4,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { parseReviewMarkdown, renderReviewMarkdown } from "./license-audit-review.mjs";
+
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const RUNTIME_PROBE = fileURLToPath(new URL("license-audit-runtime.mjs", import.meta.url));
 const DIGEST_REFERENCE = /^[^\s@]+@sha256:[a-f0-9]{64}$/u;
@@ -438,6 +440,15 @@ function writeJson(file, value) {
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, { flag: "wx" });
 }
 
+function readEvidence(directory) {
+  const evidencePath = path.resolve(directory);
+  const evidence = JSON.parse(fs.readFileSync(path.join(evidencePath, "evidence.json"), "utf8"));
+  const spdx = JSON.parse(fs.readFileSync(path.join(evidencePath, "sbom.spdx.json"), "utf8"));
+  if (sha256(JSON.stringify(spdx)) !== evidence.sbomSha256)
+    fail("SBOM differs from the captured evidence");
+  return { evidence, spdx };
+}
+
 function captureOptions(argv) {
   const options = optionsFrom(argv, ["--image", "--base", "--platform", "--output"]);
   if (!DIGEST_REFERENCE.test(options["--image"]) || !DIGEST_REFERENCE.test(options["--base"])) {
@@ -594,29 +605,47 @@ function capture(argv) {
 
 function verify(argv) {
   const options = optionsFrom(argv, ["--evidence", "--decisions"]);
-  const evidencePath = path.resolve(options["--evidence"]);
-  const evidence = JSON.parse(fs.readFileSync(path.join(evidencePath, "evidence.json"), "utf8"));
-  const spdx = JSON.parse(fs.readFileSync(path.join(evidencePath, "sbom.spdx.json"), "utf8"));
+  const { evidence } = readEvidence(options["--evidence"]);
   const decisions = JSON.parse(fs.readFileSync(path.resolve(options["--decisions"]), "utf8"));
-  if (sha256(JSON.stringify(spdx)) !== evidence.sbomSha256)
-    fail("SBOM differs from the captured evidence");
   const errors = validateDecisions(evidence, decisions);
   if (errors.length > 0) fail(errors.join("\n"));
   process.stdout.write(`Review complete for ${evidence.image.reference} (${evidence.platform})\n`);
 }
 
+function reviewInit(argv) {
+  const options = optionsFrom(argv, ["--evidence", "--output"]);
+  const { evidence, spdx } = readEvidence(options["--evidence"]);
+  const output = path.resolve(options["--output"]);
+  fs.writeFileSync(output, renderReviewMarkdown(evidence, spdx), { flag: "wx" });
+  process.stdout.write(`Wrote review worksheet: ${output}\n`);
+}
+
+function reviewImport(argv) {
+  const options = optionsFrom(argv, ["--evidence", "--review", "--output"]);
+  const { evidence } = readEvidence(options["--evidence"]);
+  const markdown = fs.readFileSync(path.resolve(options["--review"]), "utf8");
+  const decisions = parseReviewMarkdown(markdown, evidence);
+  const output = path.resolve(options["--output"]);
+  writeJson(output, decisions);
+  process.stdout.write(`Imported review decisions: ${output}\n`);
+}
+
 function help() {
   process.stdout.write(`Usage:
   pnpm license:audit capture --image NAME@sha256:DIGEST --base NAME@sha256:DIGEST --platform linux/amd64 --output DIRECTORY
+  pnpm license:audit review-init --evidence DIRECTORY --output FILE.md
+  pnpm license:audit review-import --evidence DIRECTORY --review FILE.md --output FILE.json
   pnpm license:audit verify --evidence DIRECTORY --decisions FILE
 
 Capture requires a clean checkout and an immutable registry image (a disposable
 local registry is suitable). It verifies source/base labels and base layers,
 extracts the attached SPDX SBOM for the same digest/platform, and writes new
 evidence.json, sbom.spdx.json, and decisions.template.json files. The template
-contains no legal approvals. Verify checks the completed decisions against the
+contains no legal approvals. Review-init creates a fillable Markdown worksheet;
+review-import converts it into decisions.json without approving pending items.
+Both refuse to overwrite their output. Verify checks the completed decisions against the
 bound evidence; missing terms, dispositions, reviewers, or reconciliations exit
-nonzero. Neither command signs off a release on its own.
+nonzero. None of these commands signs off a release on its own.
 `);
 }
 
@@ -625,6 +654,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const command = process.argv[2];
     const args = process.argv.slice(3);
     if (command === "capture") capture(args);
+    else if (command === "review-init") reviewInit(args);
+    else if (command === "review-import") reviewImport(args);
     else if (command === "verify") verify(args);
     else if (command === "--help" || command === "help" || command === undefined) help();
     else fail(`Unknown command: ${command}`);

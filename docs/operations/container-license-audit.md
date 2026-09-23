@@ -68,15 +68,37 @@ docker rm -f stellara-audit-registry
 
 Keep `evidence.json` and `sbom.spdx.json` with the review record. A qualified reviewer checks primary license and notice sources for every component, including Debian's installed copyright files, Node and base-image material, Chromium's bundled third-party material, fonts, native modules, and other copied assets. Reconcile every missing, extra, duplicate, or imprecise SBOM item and every production-boundary finding. Record a named, versioned upstream inventory and evidence link where a bundled component needs one. Do not infer a component's terms from its parent package or treat absent slim-image documentation as proof that no obligation exists.
 
-Copy the template to a separate decision file and have the reviewer complete it:
+Create a Markdown worksheet from the captured evidence and have the reviewer complete that file:
 
 ```sh
-cp "$audit_root/candidate/decisions.template.json" "$audit_root/candidate/decisions.json"
-# Edit decisions.json using the reviewed primary evidence.
+pnpm license:audit review-init \
+  --evidence "$audit_root/candidate" \
+  --output "$audit_root/candidate/review.md"
+# Edit review.md using the reviewed primary evidence.
+pnpm license:audit review-import \
+  --evidence "$audit_root/candidate" \
+  --review "$audit_root/candidate/review.md" \
+  --output "$audit_root/candidate/decisions.json"
 pnpm license:audit verify \
   --evidence "$audit_root/candidate" \
   --decisions "$audit_root/candidate/decisions.json"
 ```
+
+Each component and finding has its own `license-review` block. Do not edit its HTML marker or field labels. For example, after checking a component's actual license and distribution obligations, fill its block like this (values are illustrative, not a decision for any real package):
+
+````md
+```license-review
+Decision: approved
+Reviewer: Reviewer name
+Terms: MIT
+Evidence: /app/node_modules/example/LICENSE
+Evidence: https://example.org/example/LICENSE
+Notice action: included
+Notice location: /app/THIRD_PARTY_NOTICES.md
+```
+````
+
+For a reconciliation finding, use `Decision: resolved`, `Reviewer`, `Resolution`, and at least one `Evidence` line. Add one `Evidence:` line per checked source. Leave `Decision: pending` until that specific item is reviewed. `review-import` writes a new JSON file without overwriting an existing one; use a new output filename for each revision. It rejects missing, duplicate, unknown, or malformed items and stale evidence binding. It does not validate the legal substance or turn pending items into approvals. `verify` remains the completeness gate, so it is expected to fail on a partially filled worksheet.
 
 Each component needs `decision: "approved"`, a reviewer, specific `terms`, evidence links or references, and a `noticeDisposition` action (`included`, `linked`, `source-offer`, or `not-required`). The first three actions also need a location. Each reconciliation finding needs `decision: "resolved"`, a reviewer, resolution, and evidence. `verify` exits nonzero for incomplete or unknown decisions, unresolved findings, a changed SBOM, decisions bound to another evidence file, or a failed production-dependency boundary. It does not verify the legal correctness of the entered terms or that required materials actually reached the distributed image.
 
@@ -114,8 +136,14 @@ printf 'Release evidence: %s\n' "$audit_root/release"
 Use a fresh evidence directory for the release. Inspect its `evidence.json` and `sbom.spdx.json`, then complete and verify a new decision file:
 
 ```sh
-cp "$audit_root/release/decisions.template.json" "$audit_root/release/decisions.json"
-# Complete decisions.json using the release evidence and qualified review.
+pnpm license:audit review-init \
+  --evidence "$audit_root/release" \
+  --output "$audit_root/release/review.md"
+# Complete review.md using the release evidence and qualified review.
+pnpm license:audit review-import \
+  --evidence "$audit_root/release" \
+  --review "$audit_root/release/review.md" \
+  --output "$audit_root/release/decisions.json"
 pnpm license:audit verify \
   --evidence "$audit_root/release" \
   --decisions "$audit_root/release/decisions.json"
