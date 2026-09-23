@@ -22,6 +22,7 @@
     "tests/**/*",
     "eslint.config.js",
     "vitest.config.ts",
+    "vitest.container.config.ts",
     "vitest.integration.config.ts",
     "oxlint.config.ts"
   ]
