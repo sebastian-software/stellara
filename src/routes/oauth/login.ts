@@ -4,8 +4,9 @@
  * `STELLARA_TOKEN_<USERID>` value; this handler:
  *
  *   1. Validates the body against {@link loginFormSchema}.
- *   2. Matches the token against `Config.tokens` in constant time. On
- *      mismatch, re-renders the login form with a short error message.
+ *   2. Matches the token against configured and revoked values with the
+ *      shared direct-auth resolver. On mismatch, re-renders the login form
+ *      with a short error message.
  *   3. On success: creates a session row, sets the `stellara_session`
  *      cookie (HttpOnly, SameSite=Lax, 12h TTL) and 302-redirects to
  *      `/oauth/authorize` with the original query string so the GET handler
@@ -19,8 +20,7 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 
-import { createHash, timingSafeEqual } from "node:crypto";
-
+import { resolveStaticTokenConstantTime } from "../../auth.js";
 import { ClientMetadataError, type ResolvedClient } from "../../oauth/client-metadata.js";
 import { type LoginFormState, renderLoginForm } from "../../oauth/login-form.js";
 import { hashClientId, validateResolvedClientResource } from "../../oauth/resource.js";
@@ -43,7 +43,11 @@ export function registerOAuthLoginRoute(app: FastifyInstance): void {
       const body = request.body;
       const client = await revalidateFormState({ app, body, sourceIp: request.ip, reply });
       if (client === undefined) return;
-      const userId = resolveTokenConstantTime(body.token, app.config.tokens);
+      const userId = resolveStaticTokenConstantTime(
+        body.token,
+        app.config.tokens,
+        app.config.revokedTokens,
+      );
       if (userId === undefined) {
         handleInvalidToken({ reply, body, client, sourceIp: request.ip });
         return;
@@ -94,30 +98,6 @@ function handleInvalidToken(args: {
     client: args.client,
     message: "Invalid token. Please try again.",
   });
-}
-
-/**
- * Constant-time bearer-token lookup. Identical to the static path in
- * `src/auth.ts` so the login form has the same timing characteristics as
- * direct API auth.
- */
-function resolveTokenConstantTime(
-  token: string,
-  tokens: ReadonlyMap<string, string>,
-): string | undefined {
-  const inputDigest = digest(token);
-  let matched: string | undefined;
-  for (const [knownToken, userId] of tokens) {
-    const knownDigest = digest(knownToken);
-    if (timingSafeEqual(inputDigest, knownDigest)) {
-      matched = userId;
-    }
-  }
-  return matched;
-}
-
-function digest(value: string): Buffer {
-  return createHash("sha256").update(value, "utf8").digest();
 }
 
 /**

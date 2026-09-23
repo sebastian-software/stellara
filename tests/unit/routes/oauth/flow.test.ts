@@ -193,6 +193,43 @@ describe("OAuth flow — happy path", () => {
     expect(response.body).toContain('action="/oauth/login"');
   });
 
+  it("rejects revoked static tokens during OAuth login like unknown tokens", async () => {
+    const revokedApp = await buildApp(
+      makeTestConfig({ STELLARA_REVOKED_TOKENS: TEST_TOKEN_USER_A }),
+    );
+    try {
+      const client = await registerClient(revokedApp);
+      const { challenge } = generatePkcePair();
+      const basePayload = {
+        response_type: "code",
+        client_id: client.client_id,
+        redirect_uri: REDIRECT_URI,
+        scope: SCOPE,
+        state: "revoked",
+        code_challenge: challenge,
+        code_challenge_method: "S256",
+        resource: RESOURCE,
+      };
+      const revoked = await revokedApp.inject({
+        method: "POST",
+        url: "/oauth/login",
+        payload: { ...basePayload, token: TEST_TOKEN_USER_A },
+      });
+      const unknown = await revokedApp.inject({
+        method: "POST",
+        url: "/oauth/login",
+        payload: { ...basePayload, token: "unknown-static-token" },
+      });
+      expect(revoked.statusCode).toBe(400);
+      expect(revoked.body).toBe(unknown.body);
+      expect(revoked.body).toContain("Invalid token. Please try again.");
+      expect(revoked.body).not.toContain(TEST_TOKEN_USER_A);
+      expect(revoked.cookies).toHaveLength(0);
+    } finally {
+      await revokedApp.close();
+    }
+  });
+
   it("requires resource for clients registered at or after the persistent cutover", async () => {
     const client = await registerClient(app);
     const { challenge } = generatePkcePair();

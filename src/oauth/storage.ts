@@ -16,6 +16,8 @@ import Database, { type Database as DatabaseType } from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
+import { reconcileSnapshotInTransaction } from "./storage-reconciliation.js";
+
 /** Default cadence at which expired rows are swept from SQLite (60s). */
 const DEFAULT_TTL_SWEEP_INTERVAL_MS = 60_000;
 
@@ -163,6 +165,22 @@ export class OAuthStorage {
       }
       return persisted;
     })();
+  }
+
+  /**
+   * Reconciles persisted OAuth authorization state with a static-token
+   * snapshot. The previous read, all three authorization-table deletions,
+   * and metadata replacement share one SQLite transaction. A `null` decision
+   * means the previous snapshot cannot be trusted and all authorization state
+   * must be invalidated; clients, signing keys, and other metadata remain.
+   */
+  public reconcileStaticTokenSnapshot(
+    nextSnapshot: string,
+    removedUsers: (previousSnapshot: string | undefined) => null | ReadonlySet<string>,
+  ) {
+    return this.db.transaction(() =>
+      reconcileSnapshotInTransaction(this.db, nextSnapshot, removedUsers),
+    )();
   }
 
   // ----- oauth_clients --------------------------------------------------

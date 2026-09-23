@@ -33,6 +33,7 @@ cp .env.example .env
 ```
 
 Set a public base URL, at least one `STELLARA_TOKEN_<USERID>`, and the required Firecrawl values in `.env`. Optional Exa, Qdrant, and embeddings credentials enable their matching tool families.
+See the [runtime configuration reference](docs/operations/configuration.md) for every key, its default, dependencies, and restart behavior.
 
 Start the development server:
 
@@ -79,6 +80,7 @@ GitHub Actions never receives or runs these integration credentials.
 - [Test strategy](docs/developer-guide/tests.md)
 - [Architecture](docs/developer-guide/stellara-konzept.md)
 - [Operations](docs/operations/betrieb.md)
+- [Runtime configuration](docs/operations/configuration.md)
 - [Release process](docs/operations/release-prozess.md)
 
 Some in-depth documentation is currently available in German. Translation work is tracked in the public issue tracker.

@@ -118,16 +118,14 @@ function digest(value: string): Buffer {
 }
 
 /**
- * Resolves a bearer token to its userId in constant time with respect to
- * which entry matches. The loop visits every configured token even after a
- * match so that an attacker cannot infer the matched slot from response
- * latency. Per-request cost is ~3 SHA-256 digests + 3 buffer comparisons,
- * which is in the low microsecond range and negligible compared to the rest
- * of the request lifecycle.
+ * Resolves a static token without a match-position or revocation early exit.
+ * Every configured and revoked entry is digested and compared before a result
+ * is returned, so revoked and unknown static tokens share the same failure.
  */
-function resolveTokenConstantTime(
+export function resolveStaticTokenConstantTime(
   token: string,
   tokens: ReadonlyMap<string, string>,
+  revokedTokens: ReadonlySet<string>,
 ): string | undefined {
   const inputDigest = digest(token);
   let matched: string | undefined;
@@ -137,7 +135,13 @@ function resolveTokenConstantTime(
       matched = userId;
     }
   }
-  return matched;
+  let revoked = false;
+  for (const revokedToken of revokedTokens) {
+    if (timingSafeEqual(inputDigest, digest(revokedToken))) {
+      revoked = true;
+    }
+  }
+  return revoked ? undefined : matched;
 }
 
 /**
@@ -203,10 +207,9 @@ export type AuthHookDeps = {
 
 /**
  * Resolves the bearer token against either the OAuth JWT path or the static
- * token map in a single pass. Revocation is checked BEFORE the static lookup
- * so a leaked credential cannot be used even when its env entry is still
- * present (§6.5). JWT-format tokens are validated against the active signing
- * key and the configured issuer/audience; a JWT-format token that fails
+ * token map. Static lookup and revocation share a full scan (§6.5). Exact
+ * JWT revocation remains checked before JWT verification. JWT-format tokens
+ * are validated against the active signing key and configured issuer/audience; a token that fails
  * verification is rejected with 401 and never falls back to the static path.
  */
 async function resolveBearerToken(
@@ -218,13 +221,14 @@ async function resolveBearerToken(
   if (token === undefined) {
     return { reason: "Missing or malformed Authorization header", userId: undefined };
   }
-  if (config.revokedTokens.has(token)) {
-    return { reason: "Unknown bearer token", userId: undefined };
-  }
   if (looksLikeJwt(token)) {
+    // Preserve exact-value JWT revocation before signature verification.
+    if (config.revokedTokens.has(token)) {
+      return { reason: "Unknown bearer token", userId: undefined };
+    }
     return resolveJwtBearer(config, signingKey, token);
   }
-  const userId = resolveTokenConstantTime(token, config.tokens);
+  const userId = resolveStaticTokenConstantTime(token, config.tokens, config.revokedTokens);
   if (userId === undefined) {
     return { reason: "Unknown bearer token", userId: undefined };
   }

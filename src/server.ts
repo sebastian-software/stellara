@@ -24,6 +24,7 @@ import { createClientRegistrar } from "./oauth/clients.js";
 import { type ActiveSigningKey, loadOrBootstrapSigningKey } from "./oauth/keys.js";
 import { initializeResourceCutover } from "./oauth/resource.js";
 import { createSessionManager } from "./oauth/session.js";
+import { reconcileStaticTokenState } from "./oauth/static-token-state.js";
 import { OAuthStorage } from "./oauth/storage.js";
 import { registerRateLimit, registerUnauthRateLimit } from "./rate-limit.js";
 import { registerBrowserRoutes } from "./routes/browser/index.js";
@@ -118,9 +119,8 @@ export type BuildAppOptions = {
  * Plugin order follows the architecture decision in plan 0002:
  *  1. logger + body-limit + trustProxy (constructor)
  *  2. request-id generator (`genReqId`)
- *  3. unauth rate-limit hook — runs before auth so token-brute-force and
- *     audit-log floods are capped even when the auth hook would reject the
- *     request with 401 (concept §7.1, §22)
+ *  3. no-Bearer IP rate-limit hook — runs before auth; requests with a Bearer
+ *     header bypass this tier, including invalid and revoked credentials
  *  4. auth hook (`onRequest`)
  *  5. per-user rate-limit plugin (depends on `request.userId`)
  *  6. global error handler
@@ -146,7 +146,11 @@ export async function buildApp(
 
   // OAuth subsystem must come up first because the auth hook depends on the
   // active signing key for JWT verification (§6.6).
-  const { storage: oauthStorage, signingKey, resourceRequiredSince } = bootstrapOAuth(config);
+  const {
+    storage: oauthStorage,
+    signingKey,
+    resourceRequiredSince,
+  } = bootstrapOAuth(config, app.log);
   app.decorate("config", config);
   app.decorate(
     "services",
@@ -176,25 +180,33 @@ export async function buildApp(
 }
 
 /**
- * Spins up the OAuth storage + signing key + orphan-cleanup sweep. Extracted
- * from {@link buildApp} so the bootstrap stays within the project's
+ * Spins up the OAuth storage, reconciles static-token state, and loads the
+ * signing key. Extracted from {@link buildApp} so it stays within the project's
  * per-function statement budget while keeping the OAuth-lifecycle steps
  * grouped together.
  */
-function bootstrapOAuth(config: Config): {
+function bootstrapOAuth(
+  config: Config,
+  log: FastifyInstance["log"],
+): {
   storage: OAuthStorage;
   signingKey: ActiveSigningKey;
   resourceRequiredSince: number;
 } {
   const storage = new OAuthStorage({ path: resolveSqlitePath(config) });
-  const resourceRequiredSince = initializeResourceCutover(storage);
-  const signingKey = loadOrBootstrapSigningKey(storage);
-  // Token-rotation hygiene: drop any sessions/refresh tokens whose userId is
-  // no longer in the configured token map. Protects against the doubly-used-
-  // credential case where `STELLARA_TOKEN_<USERID>` was rotated while the
-  // OAuth surface still carried valid refresh tokens for that user.
-  sweepOrphanedOAuthState(storage, config);
-  return { storage, signingKey, resourceRequiredSince };
+  try {
+    const reconciliation = reconcileStaticTokenState(storage, config);
+    log.info(
+      { event: "oauth_static_token_reconciled", ...reconciliation },
+      "OAuth state reconciled",
+    );
+    const resourceRequiredSince = initializeResourceCutover(storage);
+    const signingKey = loadOrBootstrapSigningKey(storage);
+    return { storage, signingKey, resourceRequiredSince };
+  } catch (error) {
+    storage.close();
+    throw error;
+  }
 }
 
 /**
@@ -229,9 +241,7 @@ function registerLifecycleHooks(
     void reply.header("x-request-id", request.id);
     done();
   });
-  // Pre-auth IP rate-limit — must run BEFORE `createAuthHook` so that
-  // unauthenticated traffic cannot brute-force tokens or flood the audit log
-  // by hiding behind 401 responses (concept §7.1, §22).
+  // Pre-auth IP rate-limit for requests without a usable Bearer header.
   registerUnauthRateLimit(app, config);
   app.addHook("onRequest", createAuthHook(config, { signingKey }));
   // Rebind the child logger right after auth so subsequent log lines —
@@ -254,30 +264,6 @@ function registerLifecycleHooks(
 function resolveSqlitePath(config: Config): string {
   if (config.oauth.dataDir === ":memory:") return ":memory:";
   return join(config.oauth.dataDir, "stellara.db");
-}
-
-/**
- * Removes refresh tokens and sessions for userIds that are no longer in the
- * configured token map. Called once at boot so a `STELLARA_TOKEN_<USERID>`
- * rotation cannot leave stale OAuth credentials alive past the rotation
- * (plan 0004 plan-review security finding).
- */
-function sweepOrphanedOAuthState(storage: OAuthStorage, config: Config): void {
-  const knownUserIds = new Set(config.tokens.values());
-  const allRefreshRows = storage.db
-    .prepare<unknown[], { user_id: string }>("SELECT DISTINCT user_id FROM oauth_refresh_tokens")
-    .all();
-  const allSessionRows = storage.db
-    .prepare<unknown[], { user_id: string }>("SELECT DISTINCT user_id FROM oauth_sessions")
-    .all();
-  const orphanUserIds = new Set<string>();
-  for (const row of [...allRefreshRows, ...allSessionRows]) {
-    if (!knownUserIds.has(row.user_id)) orphanUserIds.add(row.user_id);
-  }
-  for (const userId of orphanUserIds) {
-    storage.deleteRefreshTokensForUser(userId);
-    storage.deleteSessionsForUser(userId);
-  }
 }
 
 /**
