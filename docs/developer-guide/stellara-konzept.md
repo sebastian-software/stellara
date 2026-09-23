@@ -1728,49 +1728,15 @@ STELLARA_PLAYWRIGHT_MAX_SESSIONS_PER_USER=1
 
 ## 13. Docker Compose
 
-```yaml
-services:
-  stellara:
-    image: ghcr.io/sebastian-software/stellara:latest
-    container_name: stellara
-    restart: unless-stopped
-    env_file:
-      - .env
-    networks:
-      - internal
-      - proxy
-    expose:
-      - "8787"
-    volumes:
-      # Persistente SQLite-Datei für den OAuth-Server (§6.6).
-      # Beim ersten Boot wird hier das RSA-Keypair und das
-      # Schema angelegt; Backup-Strategie ist Sache des Operators.
-      - ./stellara-data:/data
-    healthcheck:
-      test:
-        - CMD
-        - node
-        - -e
-        - "fetch('http://localhost:8787/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    mem_limit: 512m
-    cpus: 1.0
-
-networks:
-  internal:
-    external: true
-  proxy:
-    external: true
-    name: ${STELLARA_PROXY_NETWORK:?Set STELLARA_PROXY_NETWORK to the external proxy network name}
-```
-
-Das logische Netzwerk `proxy` verbindet Stellara mit dem Edge/Reverse Proxy.
-Sein tatsächlicher externer Name wird verpflichtend über
-`STELLARA_PROXY_NETWORK` gesetzt; ohne den Wert muss bereits das Rendern der
-Compose-Konfiguration fehlschlagen.
+Das ausführbare Artefakt ist [`docker-compose.yml`](../../docker-compose.yml),
+nicht eine zweite Kopie in diesem Konzept. Es startet ausschließlich Stellara,
+verwendet die beiden bereits vorhandenen externen Netze `internal` und `proxy`,
+mountet `./stellara-data` nach `/data` und veröffentlicht Port `8787` nicht
+auf dem Host. `STELLARA_PROXY_NETWORK` benennt das tatsächliche externe
+Proxy-Netz; ohne den Wert scheitert die Compose-Interpolation.
+`STELLARA_IMAGE` wählt das Image. Für Produktion wird eine feste Version oder
+ein Digest verwendet. Die genauen Schritte für einen neuen Host stehen in
+[„Betrieb“](../operations/betrieb.md#stellara-auf-einem-neuen-host-bereitstellen).
 
 ---
 
@@ -1933,10 +1899,13 @@ ausgehenden Tools, die einen Caller-Host dialen: `web_scrape` (§8.2),
 `web_crawl` (§8.3), `web_map` (§8.10), `web_extract` (§8.11),
 `web_crawl_start` (§8.15), `web_fetch` (§8.17), `web_graphql` (§8.18).
 
-Mitigation in v1: Firecrawl-Tools haben zusätzlich `BLOCKED_URLS` in
-`docker-compose.yml` als zweite Verteidigungslinie; alle Tools nutzen
-strikte Bearer-Auth und Per-User-Rate-Limits (§6, §22), damit ein
-TOCTOU-Erfolg nicht zur breiten Lateral-Movement-Quelle wird.
+Für Firecrawl-Tools muss diese zweite Schutzgrenze an der tatsächlich
+bereitgestellten Firecrawl-Version oder deren Egress-Proxy umgesetzt und
+getestet werden. Stellaras `docker-compose.yml` startet Firecrawl nicht und
+belegt keine wirksame `BLOCKED_URLS`-Konfiguration. Die Betreiberprüfung ist
+in [„Betrieb“](../operations/betrieb.md#netze-und-upstream-dienste-verbinden)
+beschrieben. Alle Tools nutzen zusätzlich Bearer-Auth und Per-User-Rate-Limits
+(§6, §22).
 
 Zukünftige Verbesserung (außerhalb dieses Konzept-Stands): Custom
 DNS-Dispatcher auf undici-Ebene, der die aufgelöste IP gegen die
@@ -2047,8 +2016,9 @@ laufender Nutzung sind unerwünscht.
 ### Lokaler Dev-Build
 
 ```bash
-docker build -t stellara .
-docker compose up -d
+docker build -f docker/Dockerfile -t stellara:local .
+# STELLARA_IMAGE=stellara:local in der nicht getrackten .env setzen
+docker compose up -d stellara
 ```
 
 ### Logs
@@ -2057,56 +2027,14 @@ docker compose up -d
 docker logs -f stellara
 ```
 
-### Multi-Stage-Dockerfile (Skizze)
+### Multi-Stage-Dockerfile
 
-```dockerfile
-# production dependencies
-FROM node:24-bookworm-slim AS prod-deps
-WORKDIR /app
-ENV NODE_ENV=production
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN corepack enable \
-  && corepack prepare "$(node -p "require('./package.json').packageManager")" --activate
-RUN pnpm install --prod --frozen-lockfile
-
-# build
-FROM node:24-bookworm-slim AS build
-WORKDIR /app
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN corepack enable \
-  && corepack prepare "$(node -p "require('./package.json').packageManager")" --activate
-RUN pnpm install --frozen-lockfile
-RUN pnpm exec playwright install --with-deps chromium
-COPY . .
-RUN pnpm build
-
-# runtime
-FROM node:24-bookworm-slim
-ARG APP_VERSION=0.0.0
-WORKDIR /app
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-# Installiert tini und die Chromium-Laufzeitbibliotheken und legt app:app
-# mit der stabilen UID/GID 999 sowie das beschreibbare /data-Verzeichnis an.
-COPY --from=prod-deps --chown=app:app /app/node_modules ./node_modules
-COPY --from=build --chown=app:app /app/dist        ./dist
-COPY --from=build --chown=app:app /app/package.json ./
-COPY --from=build --chown=app:app /app/LICENSE      /app/LICENSE
-COPY --from=build --chown=app:app /ms-playwright    /ms-playwright
-USER app
-ENV NODE_ENV=production \
-    APP_VERSION=${APP_VERSION} \
-    STELLARA_DATA_DIR=/data
-VOLUME ["/data"]
-EXPOSE 8787
-ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["node", "dist/server.js"]
-```
-
-`APP_VERSION` wird im GitHub-Actions-Workflow aus
-`package.json` ausgelesen und als `--build-arg` gesetzt;
-das Container-Tag entspricht derselben Versionsnummer
-(§15.1, §24).
+Das ausführbare [`docker/Dockerfile`](../../docker/Dockerfile) ist die
+verbindliche Build-Quelle. Der Build erhält `APP_VERSION` bei Releases über
+den Workflow als Build-Argument. Das Runtime-Image läuft als UID/GID `999`,
+enthält die Chromium-Laufzeitbibliotheken und nutzt `/data` für die
+SQLite-Persistenz. Die lokale Build-Anweisung oben nennt den Dockerfile-Pfad
+ausdrücklich.
 
 ### Graceful Shutdown
 

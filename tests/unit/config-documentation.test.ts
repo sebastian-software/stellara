@@ -31,13 +31,14 @@ describe("operator configuration inventory", () => {
     expect(reference).toContain("## Build metadata");
   });
 
-  it("allows only runtime keys, token examples, and the Compose-only network in .env.example", () => {
+  it("allows only runtime keys, token examples, and Compose-only settings in .env.example", () => {
     const keys = keysFromExample();
     expect(new Set(keys).size).toBe(keys.length);
     const runtime = keys.filter((key) => RUNTIME_ENV_KEYS.includes(key));
     const extras = keys.filter((key) => !RUNTIME_ENV_KEYS.includes(key));
     expect(runtime.toSorted()).toStrictEqual([...RUNTIME_ENV_KEYS]);
     expect(extras.toSorted()).toStrictEqual([
+      "STELLARA_IMAGE",
       "STELLARA_PROXY_NETWORK",
       "STELLARA_TOKEN_USER_A",
       "STELLARA_TOKEN_USER_B",

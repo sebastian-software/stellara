@@ -1,23 +1,15 @@
-# SSRF defense-in-depth notes
-# ---------------------------
-# The gateway validates every user-supplied URL through `safeExternalUrl`
-# (see `src/schemas/common.ts`) before forwarding it to Firecrawl. That
-# refinement rejects non-http(s) schemes, internal Docker service names
-# (`qdrant`, `firecrawl`, …), `localhost`, RFC1918, loopback, link-local
-# and CGNAT IP literals — but cannot defeat DNS-time TOCTOU
-# (a public hostname may still resolve to a private address at scrape time).
-#
-# If Firecrawl is deployed alongside Stellara on the `internal` network,
-# configure its own SSRF allow/deny list as the second line of defense.
-# The self-hosted Firecrawl image accepts a `BLOCKED_URLS` environment
-# variable (comma-separated CIDR/hostname list) — TODO once the Firecrawl
-# service is added to this compose file, enable e.g.:
-#
-#   environment:
-#     BLOCKED_URLS: "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,::1/128,fc00::/7,fe80::/10,qdrant,firecrawl,stellara,embeddings"
+# SSRF defense in depth
+# ---------------------
+# Stellara validates user-supplied URLs before forwarding them to Firecrawl,
+# but DNS can change between validation and the upstream request. Firecrawl
+# runs separately; verify SSRF controls for its deployed version and test that
+# its egress cannot reach local or internal addresses. Firecrawl recommends a
+# secure egress proxy for OSS Playwright services:
+# https://github.com/firecrawl/firecrawl/security/advisories/GHSA-vjp8-2wgg-p734
+# See docs/operations/betrieb.md for the deployment procedure.
 services:
   stellara:
-    image: ghcr.io/sebastian-software/stellara:latest
+    image: ${STELLARA_IMAGE:-ghcr.io/sebastian-software/stellara:0.1.15}
     container_name: stellara
     restart: unless-stopped
     env_file:
@@ -32,7 +24,7 @@ services:
     # keeps the SQLite database visible on the host so backups and
     # ownership fixes can be done with standard tools; the container runs
     # as UID/GID 999 (see Dockerfile), so the host directory must be
-    # owned by 999:999. See README -> "Volume-Mount".
+    # owned by 999:999. See docs/operations/betrieb.md#volume-mount.
     volumes:
       - ./stellara-data:/data
     healthcheck:
