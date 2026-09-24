@@ -31,6 +31,7 @@ export default [
       "dist/**",
       "node_modules/**",
       "coverage/**",
+      ".effective-flow/**",
       ".claude/**",
       ".sf-plugin/**",
       "docs/**",

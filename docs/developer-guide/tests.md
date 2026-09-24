@@ -8,11 +8,16 @@ Die Test-Suite besteht aus drei bewusst getrennten Schichten:
 
 ## GitHub Actions
 
-Pull Requests und Merge-Queue-Gruppen führen auf einem GitHub-hosted Runner exakt `pnpm agent:check` aus. Der Workflow besitzt nur `contents: read` und erhält weder Secrets noch OIDC-Tokens. Fork-PRs werden niemals auf einem Self-hosted Runner ausgeführt.
+Pull Requests und Merge-Queue-Gruppen starten auf GitHub-hosted Runnern zwei getrennte Jobs:
+
+- **`agent-check`** führt `pnpm agent:check` aus. Bei Pull Requests prüft der Job zuvor auch, ob der PR-Titel dem Conventional-Commits-Format entspricht.
+- **`container-validation`** führt `pnpm test:container` aus. Die Suite baut das finale Runtime-Image und prüft dessen Abhängigkeiten, Metadaten und Laufzeitverhalten. Zusätzlich prüft sie anhand synthetischer Dateien, welche Pfade der Docker-Build-Kontext ausschließt, und wertet die Compose-Konfiguration mit und ohne lokalen Image-Override aus. Sie startet dabei keinen Compose-Stack.
+
+Beide Jobs liefern eigenständige Statusprüfungen und können separat als verpflichtende Checks ausgewählt werden. Ob sie tatsächlich verpflichtend konfiguriert sind, legt der Workflow nicht fest. Er besitzt nur `contents: read` und erhält weder Secrets noch OIDC-Tokens. Fork-PRs werden nicht auf einem Self-hosted Runner ausgeführt.
 
 Live-Integrationstests laufen nicht in GitHub Actions. Dadurch bleiben Pull-Request-Checks reproduzierbar und benötigen keine Providerzugänge.
 
-`pnpm agent:check` umfasst weder Integrations- noch Container-Tests. Das verpflichtende Quality Gate bleibt dadurch Docker-unabhängig und hermetisch.
+`pnpm agent:check` umfasst weder Integrations- noch Container-Tests. Das lokale verpflichtende Quality Gate bleibt dadurch Docker-unabhängig und hermetisch; die Container-Validierung läuft in CI als eigener Job.
 
 ## Lokale Container-Tests
 
