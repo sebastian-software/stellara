@@ -1,5 +1,8 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -8,13 +11,40 @@ const RUN_ID = `${process.pid}-${randomUUID().replaceAll("-", "")}`.toLowerCase(
 const IMAGE = `stellara-runtime-test-${RUN_ID}:latest`;
 const SERVER_CONTAINER = `stellara-runtime-server-${RUN_ID}`;
 const DATA_VOLUME = `stellara-runtime-data-${RUN_ID}`;
-const APP_VERSION = `container-test-${RUN_ID}`;
+const packageJson: unknown = JSON.parse(
+  await readFile(join(REPOSITORY_ROOT, "package.json"), "utf8"),
+);
+if (!isRecord(packageJson) || typeof packageJson.version !== "string") {
+  throw new Error("package.json version must be a string");
+}
+const APP_VERSION = packageJson.version;
 const TOKEN = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 const DOCKER_TIMEOUT_MS = 30_000;
 const BUILD_TIMEOUT_MS = 900_000;
 const HEALTH_DEADLINE_MS = 30_000;
 const HEALTH_RETRY_MS = 250;
+const DOCKER_ENV_KEYS = [
+  "PATH",
+  "HOME",
+  "DOCKER_HOST",
+  "DOCKER_CONTEXT",
+  "DOCKER_CONFIG",
+  "DOCKER_TLS_VERIFY",
+  "DOCKER_CERT_PATH",
+  "DOCKER_API_VERSION",
+  "XDG_RUNTIME_DIR",
+  "XDG_CONFIG_HOME",
+] as const;
+
+function dockerEnvironment(): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {};
+  for (const key of DOCKER_ENV_KEYS) {
+    const value = process.env[key];
+    if (value !== undefined) environment[key] = value;
+  }
+  return environment;
+}
 
 type CommandResult = {
   stderr: string;
@@ -45,14 +75,16 @@ class DockerCommandError extends Error {
 async function runDocker(
   args: readonly string[],
   timeout = DOCKER_TIMEOUT_MS,
+  options: { cwd?: string; env?: NodeJS.ProcessEnv } = {},
 ): Promise<CommandResult> {
   return new Promise((resolve, reject) => {
     execFile(
       "docker",
       [...args],
       {
-        cwd: REPOSITORY_ROOT,
+        cwd: options.cwd ?? REPOSITORY_ROOT,
         encoding: "utf8",
+        env: options.env,
         killSignal: "SIGKILL",
         maxBuffer: 10 * 1024 * 1024,
         timeout,
@@ -103,6 +135,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 type ImageConfig = {
   Cmd: unknown;
   Entrypoint: unknown;
+  Env: unknown;
   User: unknown;
   Volumes: unknown;
 };
@@ -113,9 +146,18 @@ function parseImageConfig(serialized: string): ImageConfig {
   return {
     Cmd: parsed.Cmd,
     Entrypoint: parsed.Entrypoint,
+    Env: parsed.Env,
     User: parsed.User,
     Volumes: parsed.Volumes,
   };
+}
+
+function parseComposeImage(serialized: string): unknown {
+  const config: unknown = JSON.parse(serialized);
+  if (!isRecord(config) || !isRecord(config.services) || !isRecord(config.services.stellara)) {
+    throw new Error("Compose config was missing the stellara service");
+  }
+  return config.services.stellara.image;
 }
 
 function asError(error: unknown): Error {
@@ -130,7 +172,7 @@ const require = createRequire("/app/package.json");
 for (const name of ["fastify", "better-sqlite3", "playwright-extra"]) {
   require.resolve(name);
 }
-for (const name of ["vitest", "eslint"]) {
+for (const name of ["typescript", "vitest", "eslint"]) {
   try {
     require.resolve(name);
     throw new Error(name + " unexpectedly resolves from the runtime image");
@@ -142,6 +184,17 @@ for (const name of ["vitest", "eslint"]) {
   }
 }
 console.log("runtime dependency boundary verified");
+`;
+
+const finalFilesystemProbe = String.raw`
+import { existsSync, readdirSync } from "node:fs";
+const forbidden = [".git", "stellara-data", "tests", "docs", ".github"];
+for (const name of forbidden) {
+  if (existsSync("/app/" + name)) throw new Error("Unexpected /app/" + name);
+}
+const environmentFiles = readdirSync("/app").filter((name) => name.startsWith(".env"));
+if (environmentFiles.length > 0) throw new Error("Unexpected /app/.env* entries");
+console.log("final image repository boundary verified");
 `;
 
 const sqliteProbe = String.raw`
@@ -230,6 +283,8 @@ const healthProbe = `
 const response = await fetch("http://127.0.0.1:8787/health");
 const body = await response.json();
 if (response.status !== 200) throw new Error(\`Unexpected health status: \${response.status}\`);
+if (body.status !== "ok") throw new Error(\`Unexpected health status field: \${body.status}\`);
+if (body.service !== "stellara") throw new Error(\`Unexpected health service: \${body.service}\`);
 if (body.version !== ${JSON.stringify(APP_VERSION)}) {
   throw new Error(\`Unexpected APP_VERSION: \${body.version}\`);
 }
@@ -352,6 +407,21 @@ describe("runtime Docker image", () => {
     expect(result.stdout).toContain("runtime dependency boundary verified");
   });
 
+  it("excludes repository-only paths from the final filesystem", async () => {
+    const result = await runDocker([
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      IMAGE,
+      "node",
+      "--input-type=module",
+      "--eval",
+      finalFilesystemProbe,
+    ]);
+    expect(result.stdout).toContain("final image repository boundary verified");
+  });
+
   it("preserves the exact runtime metadata and non-root identity", async () => {
     const inspection = await runDocker(["image", "inspect", IMAGE, "--format", "{{json .Config}}"]);
     const config = parseImageConfig(inspection.stdout);
@@ -359,6 +429,8 @@ describe("runtime Docker image", () => {
     expect(config.Entrypoint).toStrictEqual(["/usr/bin/tini", "--"]);
     expect(config.Cmd).toStrictEqual(["node", "dist/server.js"]);
     expect(config.Volumes).toStrictEqual({ "/data": {} });
+    expect(config.Env).toContain("NODE_ENV=production");
+    expect(config.Env).toContain(`APP_VERSION=${APP_VERSION}`);
 
     const identity = await runDocker([
       "run",
@@ -371,6 +443,42 @@ describe("runtime Docker image", () => {
       'console.log(String(process.getuid?.()) + ":" + String(process.getgid?.()))',
     ]);
     expect(identity.stdout.trim()).toBe("999:999");
+  });
+
+  it("selects the locally built image through the Compose image override", async () => {
+    const fixture = await mkdtemp(join(tmpdir(), "stellara-compose-image-"));
+    try {
+      await cp(join(REPOSITORY_ROOT, "docker-compose.yml"), join(fixture, "docker-compose.yml"));
+      await writeFile(join(fixture, ".env"), "");
+      await mkdir(join(fixture, "stellara-data"));
+      const result = await runDocker(
+        [
+          "compose",
+          "--file",
+          "docker-compose.yml",
+          "--project-directory",
+          fixture,
+          "--env-file",
+          "/dev/null",
+          "config",
+          "--no-env-resolution",
+          "--format",
+          "json",
+        ],
+        DOCKER_TIMEOUT_MS,
+        {
+          cwd: fixture,
+          env: {
+            ...dockerEnvironment(),
+            STELLARA_PROXY_NETWORK: "ci-proxy",
+            STELLARA_IMAGE: IMAGE,
+          },
+        },
+      );
+      expect(parseComposeImage(result.stdout)).toBe(IMAGE);
+    } finally {
+      await rm(fixture, { recursive: true, force: true });
+    }
   });
 
   it("supports a better-sqlite3 round trip on the data volume", async () => {
@@ -432,15 +540,17 @@ describe("runtime Docker image", () => {
         "FIRECRAWL_API_KEY=container-fixture",
         "--env",
         `STELLARA_TOKEN_CONTAINER=${TOKEN}`,
-        "--env",
-        `APP_VERSION=${APP_VERSION}`,
         "--volume",
         `${DATA_VOLUME}:/data`,
         IMAGE,
       ]);
 
       const health = await waitForHealthyServer();
-      expect(health.stdout).toContain(APP_VERSION);
+      expect(JSON.parse(health.stdout)).toMatchObject({
+        status: "ok",
+        service: "stellara",
+        version: APP_VERSION,
+      });
 
       await runDocker([
         "exec",
