@@ -90,3 +90,4 @@ Report security vulnerabilities privately as described in [SECURITY.md](SECURITY
 ## License
 
 Stellara is available under the [MIT License](LICENSE).
+The project currently adopts no separate naming or trademark policy.

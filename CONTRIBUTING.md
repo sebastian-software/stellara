@@ -2,6 +2,8 @@
 
 Thank you for improving Stellara. Contributions are accepted through GitHub pull requests and are licensed under the repository's MIT License.
 
+To keep the barrier to contribution low, Stellara does not require a Developer Certificate of Origin (DCO) sign-off or a Contributor License Agreement (CLA) for future contributions. Past contributions are not subject to a new sign-off or agreement requirement.
+
 ## Before you start
 
 - Use Node.js 24 or newer.
