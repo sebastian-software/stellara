@@ -2336,5 +2336,5 @@ Memory-Listing mit Cursor-Pagination (§8.7)
 TLS-Terminierung am Edge/Reverse Proxy (§14)
 Image öffentlich auf ghcr.io, manueller Pull-Deploy (§19)
 Observability v1: nur Pino-Logs (§21)
-Tests zweistufig: Unit gemockt in CI, Integration lokal live (§26)
+Tests dreistufig: Unit gemockt in CI, Integration und Container lokal manuell (§26)
 ```
