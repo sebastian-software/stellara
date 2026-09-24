@@ -48,7 +48,7 @@ der SDK-Clienttest und das vollständige Quality Gate auszuführen.
 - **Maintainer:** berstend
 - **Lizenz:** MIT
 - **Letzter Release:** 2023-03-01
-- **Aufgenommen in:** [Plan 0012](../plan/2026-07-16-0012-playwright-stealth-mode.md)
+- **Einsatz im Code:** [`src/services/playwright-pool.ts`](../../src/services/playwright-pool.ts)
 
 ### Bedrohungsmodell
 
@@ -63,7 +63,7 @@ Single-Maintainer-Paket im Maintenance-Mode – neue Features sind nicht zu erwa
 - **Maintainer:** berstend
 - **Lizenz:** MIT
 - **Letzter Release:** 2023-04-11
-- **Aufgenommen in:** [Plan 0012](../plan/2026-07-16-0012-playwright-stealth-mode.md)
+- **Einsatz im Code:** [`src/services/playwright-pool.ts`](../../src/services/playwright-pool.ts)
 
 ### Bedrohungsmodell
 

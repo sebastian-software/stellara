@@ -1931,16 +1931,17 @@ Embeddings Cache:       dauerhaft pro (Provider, Modell, Texthash)
 
 ### Image-Build & Publish über GitHub Actions
 
-Der Release-Flow ist zweistufig und wird zentral über
-[release-please](https://github.com/googleapis/release-please)
-gesteuert. Ein Push auf `main` triggert **keinen** Image-Build mehr;
-Image-Builds entstehen ausschließlich durch ein veröffentlichtes GitHub
-Release, das release-please beim Merge eines „Release Please"-PRs erzeugt.
+Die automatisierte Versionierung läuft über
+[release-please](https://github.com/googleapis/release-please).
+Ein Push auf `main` triggert **keinen** Image-Build. Dieser startet bei jedem
+veröffentlichten GitHub Release – unabhängig davon, ob release-please es beim
+Merge eines „Release Please“-PRs erzeugt oder es manuell veröffentlicht wurde.
 
 ```text
 Stufe 1 — .github/workflows/release-please.yml
   Trigger:
     - push auf main
+    - workflow_dispatch (manuell)
   Schritte:
     - googleapis/release-please-action@v5
       (analysiert Conventional Commits, legt/aktualisiert Release-PR,
@@ -1953,7 +1954,8 @@ Stufe 1 — .github/workflows/release-please.yml
 
 Stufe 2 — .github/workflows/release.yml
   Trigger:
-    - release.published       -> Tags :X.Y.Z + :X.Y + :latest
+    - release.published (auch Prereleases) -> Tags :VERSION + :PREFIX + :latest
+      (PREFIX = VERSION ohne letztes Punktsegment)
   Schritte:
     - Checkout
     - Setup Buildx
@@ -1968,8 +1970,8 @@ Stufe 2 — .github/workflows/release.yml
 - `feat:` und `fix:` lösen einen Release-PR aus.
 - `chore:`, `docs:`, `refactor:`, `test:` lösen keinen Bump aus.
 - `BREAKING CHANGE:` / `feat!:` markiert einen Major-Bruch.
-- Pre-1.0-konservativ (Stellara aktuell): `bump-minor-pre-major: false`
-  und `bump-patch-for-minor-pre-major: false` — `feat:` → Patch,
+- Pre-1.0-konservativ (Stellara aktuell): `bump-minor-pre-major: true`
+  und `bump-patch-for-minor-pre-major: true` — `feat:` → Patch,
   `BREAKING CHANGE:` → Minor. Sobald Stellara `1.0.0` erreicht, gilt
   das reguläre SemVer-Mapping (`feat:` → Minor, `BREAKING` → Major).
 
@@ -1982,8 +1984,10 @@ Environment-Secret im GitHub Environment `release` einmalig vom Operator
 angelegt werden. Der fein-granulare PAT ist ausschließlich auf
 `sebastian-software/stellara` begrenzt und benötigt Contents: Read and write,
 Pull requests: Read and write sowie Issues: Read and write. Bis dahin bleibt
-`RELEASE_AUTOMATION_ENABLED=false`. Das Default-`GITHUB_TOKEN` würde den
-Tag-Push erzeugen, ohne dass weitere Workflows triggern.
+`RELEASE_AUTOMATION_ENABLED=false`. Auch ein manueller `workflow_dispatch`-Lauf
+startet den release-please-Job nur bei `RELEASE_AUTOMATION_ENABLED=true`.
+Das Default-`GITHUB_TOKEN` würde den Tag-Push erzeugen, ohne dass weitere
+Workflows triggern.
 
 ### Image-Visibility & Registry-Auth
 
@@ -2249,9 +2253,9 @@ Wechsel dieser Werte ist eine bewusste Migration:
 
 ## 26. Tests-Strategie
 
-Vitest, zweistufig:
+Vitest mit getrennten Unit-, Integrations- und Container-Suites:
 
-### Unit (in CI bei jedem Push)
+### Unit (in CI bei Pull Requests und Merge-Queue-Gruppen)
 
 - Alle Routen mit gemockten Upstream-Services
   (Exa, Firecrawl, Qdrant, Embedding-Provider).
@@ -2259,7 +2263,7 @@ Vitest, zweistufig:
   liefern realistische Beispiel-Responses.
 - Auth, Rate-Limit, Fehlerkatalog, Per-User-Isolation,
   Memory-Point-ID-Ableitung.
-- Schnell genug für jeden Commit, keine Netzwerk-Kosten.
+- Schnell genug für jeden Pull Request und jede Merge-Queue-Gruppe, keine Netzwerk-Kosten.
 
 ### Integration (nur lokal und manuell)
 
@@ -2271,6 +2275,11 @@ Vitest, zweistufig:
   gezielten Providerprüfung.
 - GitHub Actions erhält keine Integration-Secrets und führt diese
   Suite nicht aus.
+
+### Container (nur lokal und manuell)
+
+- `pnpm test:container` prüft das gebaute Runtime-Image in isolierten
+  Containern. Voraussetzungen und Umfang stehen in [„Tests“](tests.md#lokale-container-tests).
 
 ---
 
