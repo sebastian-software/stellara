@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access, cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -66,7 +66,6 @@ type ComposeConfig = {
   networks: Record<string, { external?: boolean; name?: string }>;
   services: {
     stellara: {
-      env_file?: Array<{ path: string } | string>;
       expose?: string[];
       healthcheck?: { test?: string[] };
       image?: string;
@@ -181,6 +180,7 @@ describe("container build context and Compose contract", () => {
       await cp(join(REPOSITORY_ROOT, "docker-compose.yml"), join(fixture, "docker-compose.yml"));
       await writeFile(join(fixture, ".env"), "");
       await mkdir(join(fixture, "stellara-data"));
+      const composeSource = await readFile(join(fixture, "docker-compose.yml"), "utf8");
 
       const environment: NodeJS.ProcessEnv = {
         ...dockerEnvironment(),
@@ -193,13 +193,8 @@ describe("container build context and Compose contract", () => {
       expect(defaultConfig.networks.proxy).toMatchObject({ external: true, name: "ci-proxy" });
       expect(service.networks).toHaveProperty("internal");
       expect(service.networks).toHaveProperty("proxy");
-      expect(service.env_file).toStrictEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            path: join(fixture, ".env"),
-          }),
-        ]),
-      );
+      // Compose versions may omit an empty env_file from rendered config.
+      expect(composeSource).toMatch(/^ {4}env_file:\r?\n {6}- \.env[ \t]*$/m);
       expect(service.volumes).toStrictEqual(
         expect.arrayContaining([
           expect.objectContaining({
