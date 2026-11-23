@@ -30,7 +30,7 @@
     "@fastify/formbody": "^8.0.2",
     "@fastify/rate-limit": "^10.3.0",
     "@fastify/swagger": "^9.8.1",
-    "@modelcontextprotocol/node": "2.0.0",
+    "@modelcontextprotocol/node": "2.1.0",
     "@modelcontextprotocol/server": "2.0.0",
     "@qdrant/js-client-rest": "^1.18.0",
     "better-sqlite3": "^12.11.1",
